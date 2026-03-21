@@ -2,153 +2,144 @@
 
 [中文说明](./README.zh-CN.md)
 
-`termhub` is a macOS CLI for AI agents, scripts, and developers who need to inspect and control terminal sessions through AppleScript.
+`termhub` is an AI-native macOS CLI for inspecting and controlling terminal tabs through AppleScript.
 
-- Main command: `termhub`
-- Short alias: `thub`
+- Command: `termhub`
+- Alias: `thub`
 - npm package: `@duo121/termhub`
 - Supported apps: `iTerm2`, `Terminal.app`
-- Primary output format: JSON
-
-## What It Does
-
-`termhub` gives one command surface for both iTerm2 and Apple Terminal.
-
-With it, you can:
-
-- list windows, tabs, sessions, titles, TTYs, and handles
-- resolve a target session from metadata
-- send text into a session
-- capture session contents
-- focus a target window and tab
-- query the local environment with `doctor`
 
 ## Install
-
-Install globally with npm:
 
 ```bash
 npm install -g @duo121/termhub
 ```
 
-After installation:
+Then check:
 
 ```bash
 termhub --help
-thub --help
+termhub spec
 ```
 
-## Core Concepts
+## What The User Needs To Do
 
-### App
+The user should speak to the AI in natural language.
 
-`termhub` supports two backends:
+The user does **not** need to learn the CLI.
 
-- `iterm2`
-- `terminal`
+Typical user requests:
 
-Use `--app` when you want to restrict a command to one backend.
+- "Use termhub to show me all my open iTerm2 tabs."
+- "Use termhub to close the iTerm2 tab titled Task1."
+- "Use termhub to read the last 50 lines from my current Terminal tab."
+- "Use termhub to send `npm test` to the tab titled API."
+- "Use termhub to focus the tab titled logs."
 
-### Session
+## Example AI Workflows
 
-The primary operation target is a session.
+### 1. List all open iTerm2 tabs
 
-`--session` accepts either:
+User asks the AI:
 
-- a native session id
-- a namespaced handle
+> Use termhub to show me all my open iTerm2 tabs.
 
-Examples:
-
-```text
-iterm2:session:<UUID>
-terminal:session:<windowId>:<tabIndex>
-```
-
-### Current State
-
-`--current-window`, `--current-tab`, and `--current-session` are evaluated within each supported app.
-
-If both iTerm2 and Terminal are running, add `--app` for deterministic results.
-
-## Quick Start
-
-List known sessions:
+AI workflow:
 
 ```bash
-termhub list
-termhub list --app terminal
+termhub list --app iterm2
 ```
 
-Resolve a target:
+What the AI gets back:
+
+- Windows
+- Tabs
+- Session handles
+- Tab titles
+- TTYs
+
+### 2. Close the iTerm2 tab titled `Task1`
+
+User asks the AI:
+
+> Use termhub to look at my iTerm2 tabs and close the one titled Task1.
+
+AI workflow:
 
 ```bash
-termhub resolve --title codex
-termhub resolve --app iterm2 --window-id 543005 --tab-index 2
+termhub resolve --app iterm2 --title Task1
+termhub close --app iterm2 --session iterm2:session:<resolved-id>
+```
+
+Rule:
+
+- The AI should resolve the target first.
+- If `count` is not `1`, the AI should refine the selector instead of guessing.
+
+### 3. Read the last 50 lines from the current Terminal tab
+
+User asks the AI:
+
+> Use termhub to read the last 50 lines from my current Terminal tab.
+
+AI workflow:
+
+```bash
 termhub resolve --app terminal --current-window --current-tab --current-session
+termhub capture --app terminal --session terminal:session:<resolved-window-id>:<resolved-tab-index> --lines 50
 ```
 
-Send text:
+### 4. Send a command into the tab titled `API`
+
+User asks the AI:
+
+> Use termhub to run npm test in the tab titled API.
+
+AI workflow:
 
 ```bash
-termhub send --session iterm2:session:<UUID> --text 'npm test'
-printf 'echo one\necho two\n' | termhub send --session /dev/ttys058 --stdin --app terminal
+termhub resolve --title API
+termhub send --session <resolved-handle-or-session-id> --text 'npm test'
 ```
 
-Capture contents:
+### 5. Bring the tab titled `logs` to the front
+
+User asks the AI:
+
+> Use termhub to focus the tab titled logs.
+
+AI workflow:
 
 ```bash
-termhub capture --session terminal:session:545305:1 --lines 50
+termhub resolve --title logs
+termhub focus --session <resolved-handle-or-session-id>
 ```
 
-Focus a target:
+## How The AI Should Use termhub
 
-```bash
-termhub focus --session terminal:session:545305:1
-```
+The standard pattern is:
 
-Check the environment:
+1. `list` when the user asks what is open.
+2. `resolve` when the user names a target by title, tty, current tab, window id, or handle.
+3. `send`, `capture`, `focus`, or `close` only after the target is unambiguous.
+4. `doctor` when the app state or automation permissions are unclear.
 
-```bash
-termhub doctor
-```
+Rules for the AI:
 
-## Help
+- Prefer `termhub spec` for the machine-readable command contract.
+- Use `termhub --help` or `termhub <command> --help` for human-readable clarification.
+- All command results are printed as JSON to `stdout`.
+- `--session` accepts either a native session id or a namespaced handle.
+- If `resolve` returns `count: 0` or `count > 1`, refine selectors or ask a follow-up question.
+- When both `iTerm2` and `Terminal` are running, add `--app` for deterministic current-tab queries.
 
-Every command supports `--help`:
+## Commands
 
-```bash
-termhub --help
-termhub list --help
-termhub resolve --help
-termhub send --help
-termhub capture --help
-termhub focus --help
-termhub doctor --help
-```
-
-## Output
-
-`termhub list` returns a nested JSON tree with:
-
-- `frontmostApp`
-- `apps[]`
-- `windows[].tabs[].sessions[]`
-
-`termhub resolve` returns a flat `matches[]` array. Each match includes fields such as:
-
-- `app`
-- `sessionId`
-- `handle`
-- `tty`
-- `name`
-- `windowId`
-- `tabIndex`
-- `sessionIndex`
-
-## Behavior Notes
-
-- Add `--app` when both iTerm2 and Terminal are running and you need precise current-state queries
-- iTerm2 supports send with or without enter
-- Terminal supports send with enter only; `--no-enter` is rejected
-- Main command results are printed to `stdout` as JSON
+- `list`: discover apps, windows, tabs, sessions, titles, TTYs, and handles
+- `resolve`: turn user intent into exact session matches
+- `send`: send text into one target
+- `capture`: read visible terminal contents
+- `focus`: select a target tab and bring it forward
+- `close`: close the owning tab of a resolved target
+- `doctor`: inspect platform, running apps, and automation readiness
+- `spec`: print the machine-readable command and JSON contract

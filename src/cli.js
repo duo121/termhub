@@ -4,6 +4,7 @@ import { CLIError, toErrorPayload } from "./errors.js";
 import {
   SUPPORTED_APPS,
   captureTarget,
+  closeTarget,
   focusTarget,
   getSnapshot,
   normalizeAppOption,
@@ -11,12 +12,378 @@ import {
 } from "./apps.js";
 import { filterSessions, resolveSingleSession } from "./snapshot.js";
 
+const MATCH_FIELDS = [
+  "app",
+  "displayName",
+  "bundleId",
+  "windowId",
+  "windowIndex",
+  "windowHandle",
+  "isFrontmostWindow",
+  "tabIndex",
+  "tabTitle",
+  "isCurrentTab",
+  "tabHandle",
+  "sessionIndex",
+  "sessionId",
+  "tty",
+  "name",
+  "isCurrentSession",
+  "handle",
+];
+
+function buildCliSpec() {
+  return {
+    ok: true,
+    source: "termhub",
+    specVersion: 1,
+    cli: {
+      name: "termhub",
+      aliases: ["thub"],
+    },
+    purpose:
+      "AI-native macOS terminal control CLI for discovering, resolving, focusing, capturing, sending to, and closing terminal tabs through AppleScript.",
+    supportedApps: SUPPORTED_APPS.map((app) => ({
+      app: app.app,
+      displayName: app.displayName,
+      bundleId: app.bundleId,
+    })),
+    recommendedWorkflow: [
+      "Use list when the user asks what is open right now.",
+      "Use resolve when the user identifies a target by title, tty, current tab, window id, or handle.",
+      "Only call send, capture, focus, or close after you have exactly one target.",
+      "If resolve returns count 0 or count greater than 1, refine selectors instead of guessing.",
+      "Use doctor when app availability, automation permission, or frontmost state are unclear.",
+      "Use spec or command --help when the AI needs exact flag names or JSON output fields.",
+    ],
+    conventions: {
+      transport: "stdout JSON",
+      selectors: "All resolve selectors are ANDed together.",
+      sessionSpecifier:
+        "--session accepts either a native session id or a namespaced handle such as iterm2:session:<uuid> or terminal:session:<windowId>:<tabIndex>.",
+      errors: {
+        ok: false,
+        error: {
+          code: "STRING_CODE",
+          message: "Human-readable message",
+          details: "Optional structured details",
+        },
+      },
+    },
+    commands: {
+      list: {
+        usage: "termhub list [--app <app>] [--compact]",
+        purpose:
+          "Discover running terminal apps, windows, tabs, sessions, titles, TTYs, and handles.",
+        options: [
+          {
+            name: "--app",
+            type: "string",
+            required: false,
+            values: ["iterm2", "terminal"],
+            description: "Restrict discovery to one backend.",
+          },
+          {
+            name: "--compact",
+            type: "boolean",
+            required: false,
+            description: "Print JSON without indentation.",
+          },
+        ],
+        output: {
+          topLevelFields: [
+            "ok",
+            "source",
+            "version",
+            "generatedAt",
+            "frontmostApp",
+            "counts",
+            "apps",
+            "windows",
+          ],
+          nestedFields: ["windows[].tabs[].sessions[]"],
+        },
+      },
+      resolve: {
+        usage: "termhub resolve [selectors] [--compact]",
+        purpose: "Narrow a user-described target to exact session matches.",
+        options: [
+          {
+            name: "--app",
+            type: "string",
+            required: false,
+            values: ["iterm2", "terminal"],
+            description: "Restrict matching to one backend.",
+          },
+          {
+            name: "--session",
+            type: "string",
+            required: false,
+            description: "Match a native session id or namespaced handle.",
+          },
+          { name: "--tty", type: "string", required: false, description: "Match an exact tty path." },
+          { name: "--title", type: "string", required: false, description: "Match an exact tab title." },
+          { name: "--name", type: "string", required: false, description: "Match an exact session name." },
+          {
+            name: "--window-id",
+            type: "integer",
+            required: false,
+            description: "Match a native window id.",
+          },
+          {
+            name: "--window-index",
+            type: "integer",
+            required: false,
+            description: "Match the app-local window index.",
+          },
+          {
+            name: "--tab-index",
+            type: "integer",
+            required: false,
+            description: "Match the app-local tab index.",
+          },
+          {
+            name: "--current-window",
+            type: "boolean",
+            required: false,
+            description: "Match the frontmost window inside each inspected app.",
+          },
+          {
+            name: "--current-tab",
+            type: "boolean",
+            required: false,
+            description: "Match the selected tab inside each inspected app.",
+          },
+          {
+            name: "--current-session",
+            type: "boolean",
+            required: false,
+            description: "Match the selected session inside each inspected app.",
+          },
+          {
+            name: "--compact",
+            type: "boolean",
+            required: false,
+            description: "Print JSON without indentation.",
+          },
+        ],
+        output: {
+          topLevelFields: ["ok", "criteria", "count", "matches"],
+          matchFields: MATCH_FIELDS,
+        },
+      },
+      send: {
+        usage:
+          "termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter]",
+        purpose: "Send text into one resolved target.",
+        options: [
+          {
+            name: "--session",
+            type: "string",
+            required: true,
+            description: "Target session id or namespaced handle.",
+          },
+          {
+            name: "--text",
+            type: "string",
+            required: false,
+            description: "Send one string argument.",
+          },
+          {
+            name: "--stdin",
+            type: "boolean",
+            required: false,
+            description: "Read the full stdin stream and send it as one payload.",
+          },
+          {
+            name: "--app",
+            type: "string",
+            required: false,
+            values: ["iterm2", "terminal"],
+            description: "Restrict target lookup to one backend.",
+          },
+          {
+            name: "--no-enter",
+            type: "boolean",
+            required: false,
+            description: "Do not append enter. Supported by iTerm2 only.",
+          },
+          {
+            name: "--compact",
+            type: "boolean",
+            required: false,
+            description: "Print JSON without indentation.",
+          },
+        ],
+        rules: [
+          "Exactly one of --text or --stdin is required.",
+          "Terminal rejects --no-enter.",
+        ],
+        output: {
+          topLevelFields: ["ok", "action", "newline", "bytes", "target", "text"],
+          targetFields: MATCH_FIELDS,
+        },
+      },
+      capture: {
+        usage: "termhub capture --session <id|handle> [--app <app>] [--lines <n>]",
+        purpose: "Read the current visible terminal contents from one resolved target.",
+        options: [
+          {
+            name: "--session",
+            type: "string",
+            required: true,
+            description: "Target session id or namespaced handle.",
+          },
+          {
+            name: "--app",
+            type: "string",
+            required: false,
+            values: ["iterm2", "terminal"],
+            description: "Restrict target lookup to one backend.",
+          },
+          {
+            name: "--lines",
+            type: "integer",
+            required: false,
+            description: "Trim the captured text to the last N lines.",
+          },
+          {
+            name: "--compact",
+            type: "boolean",
+            required: false,
+            description: "Print JSON without indentation.",
+          },
+        ],
+        output: {
+          topLevelFields: ["ok", "action", "target", "text"],
+          targetFields: MATCH_FIELDS,
+        },
+      },
+      focus: {
+        usage: "termhub focus --session <id|handle> [--app <app>]",
+        purpose: "Bring the owning window and tab to the front.",
+        options: [
+          {
+            name: "--session",
+            type: "string",
+            required: true,
+            description: "Target session id or namespaced handle.",
+          },
+          {
+            name: "--app",
+            type: "string",
+            required: false,
+            values: ["iterm2", "terminal"],
+            description: "Restrict target lookup to one backend.",
+          },
+          {
+            name: "--compact",
+            type: "boolean",
+            required: false,
+            description: "Print JSON without indentation.",
+          },
+        ],
+        output: {
+          topLevelFields: ["ok", "action", "target", "result"],
+          targetFields: MATCH_FIELDS,
+        },
+      },
+      close: {
+        usage: "termhub close --session <id|handle> [--app <app>]",
+        purpose: "Close the owning tab for one resolved target.",
+        options: [
+          {
+            name: "--session",
+            type: "string",
+            required: true,
+            description: "Target session id or namespaced handle.",
+          },
+          {
+            name: "--app",
+            type: "string",
+            required: false,
+            values: ["iterm2", "terminal"],
+            description: "Restrict target lookup to one backend.",
+          },
+          {
+            name: "--compact",
+            type: "boolean",
+            required: false,
+            description: "Print JSON without indentation.",
+          },
+        ],
+        notes: [
+          "iTerm2 closes the target tab through its native AppleScript close command.",
+          "Terminal closes the selected tab with the app's standard close shortcut after focusing it.",
+          "Busy tabs may still trigger the terminal app's own confirmation dialog.",
+        ],
+        output: {
+          topLevelFields: ["ok", "action", "target", "result"],
+          targetFields: MATCH_FIELDS,
+        },
+      },
+      doctor: {
+        usage: "termhub doctor [--app <app>] [--compact]",
+        purpose: "Check platform, running backends, and automation inspection state.",
+        options: [
+          {
+            name: "--app",
+            type: "string",
+            required: false,
+            values: ["iterm2", "terminal"],
+            description: "Restrict inspection to one backend.",
+          },
+          {
+            name: "--compact",
+            type: "boolean",
+            required: false,
+            description: "Print JSON without indentation.",
+          },
+        ],
+        output: {
+          topLevelFields: ["ok", "checks", "snapshot"],
+        },
+      },
+      spec: {
+        usage: "termhub spec [--compact]",
+        purpose: "Print the machine-readable termhub command and JSON contract.",
+        options: [
+          {
+            name: "--compact",
+            type: "boolean",
+            required: false,
+            description: "Print JSON without indentation.",
+          },
+        ],
+        output: {
+          topLevelFields: [
+            "ok",
+            "source",
+            "specVersion",
+            "cli",
+            "purpose",
+            "supportedApps",
+            "recommendedWorkflow",
+            "conventions",
+            "commands",
+          ],
+        },
+      },
+    },
+  };
+}
+
 const ROOT_HELP = `termhub (alias: thub)
 
-AI-oriented terminal control CLI for macOS.
-Supports:
-  - iTerm2          (--app iterm2)
-  - Apple Terminal  (--app terminal)
+AI-native macOS terminal control CLI.
+Use it when an AI needs to inspect, resolve, focus, capture, send to, or close terminal tabs.
+
+Recommended AI workflow:
+  1. termhub list
+  2. termhub resolve ...
+  3. termhub send | capture | focus | close ...
+  4. termhub doctor when app state or permissions are unclear
+  5. termhub spec for the machine-readable command and JSON contract
 
 Usage:
   termhub list [--app <app>] [--compact]
@@ -24,8 +391,20 @@ Usage:
   termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter]
   termhub capture --session <id|handle> [--app <app>] [--lines <n>]
   termhub focus --session <id|handle> [--app <app>]
+  termhub close --session <id|handle> [--app <app>]
   termhub doctor [--app <app>] [--compact]
+  termhub spec [--compact]
   termhub <command> --help
+
+Command roles:
+  list     Discover open apps, windows, tabs, sessions, titles, TTYs, and handles.
+  resolve  Narrow a user-described target to exact session matches.
+  send     Send text or stdin into one resolved target.
+  capture  Read the current visible contents from one resolved target.
+  focus    Bring the owning window and tab to the front.
+  close    Close the owning tab for one resolved target.
+  doctor   Diagnose platform, running apps, and automation readiness.
+  spec     Print machine-readable command, option, and output schema data.
 
 Selectors for resolve:
   --app <app>             Restrict search to one backend.
@@ -57,21 +436,26 @@ Output model:
       count
       matches[]
   - matches include:
-      app, sessionId, handle, tty, name, windowId, tabIndex, sessionIndex
+      ${MATCH_FIELDS.join(", ")}
 
 Backend notes:
   - When both iTerm2 and Terminal are running, add --app for precise current-* queries.
   - iTerm2 supports send with or without enter.
   - Terminal supports send with enter only; --no-enter is rejected.
+  - close targets the owning tab of the resolved session.
+  - Terminal close uses the app's normal close shortcut after focusing the target tab.
+  - Busy tabs may still trigger a native confirmation dialog inside the terminal app.
 
 Examples:
+  termhub spec
   termhub list
   termhub list --app terminal
-  termhub resolve --app iterm2 --title codex
+  termhub resolve --app iterm2 --title Task1
   termhub send --session iterm2:session:ABC-123 --text 'npm test'
   printf 'echo one\\necho two\\n' | termhub send --session /dev/ttys058 --stdin --app terminal
   termhub capture --session terminal:session:545305:1 --lines 30
   termhub focus --session 44F0F7F2-7777-4D75-A0F0-7C7CE0974EEB
+  termhub close --session terminal:session:545305:1
 
 Supported app values:
   ${SUPPORTED_APPS.map((app) => app.app).join(", ")}
@@ -84,13 +468,22 @@ Usage:
   termhub list [--app <app>] [--compact]
 
 Description:
-  Enumerate windows, tabs, sessions, titles, handles, and app metadata.
-  By default, includes all supported backends that are currently running.
+  Enumerate running terminal windows, tabs, sessions, titles, TTYs, handles, and app metadata.
+  Use this first when the user asks what is open right now.
+
+Output:
+  JSON snapshot with:
+    ok, source, version, generatedAt, frontmostApp, counts, apps[], windows[]
+  Nested fields include:
+    windows[].tabs[].sessions[]
 
 Examples:
   termhub list
   termhub list --app iterm2
   termhub list --app terminal --compact
+
+Hint:
+  Run termhub spec for the machine-readable field list.
 `,
   resolve: `termhub resolve
 
@@ -111,13 +504,24 @@ Selectors:
   --current-session
 
 Description:
-  Return a flat matches[] array for sessions that satisfy all selectors.
+  Narrow a user-described target to exact session matches.
+  All selectors are ANDed together.
+  If count is 0 or greater than 1, refine selectors instead of guessing.
   current-* selectors are app-local when multiple backends are running.
 
+Output:
+  JSON object with:
+    ok, criteria, count, matches[]
+  match fields include:
+    ${MATCH_FIELDS.join(", ")}
+
 Examples:
-  termhub resolve --title codex
+  termhub resolve --title Task1
   termhub resolve --app terminal --tty /dev/ttys058
   termhub resolve --app iterm2 --current-window --current-tab --current-session
+
+Hint:
+  Use the returned handle or sessionId as the next command's --session value.
 `,
   send: `termhub send
 
@@ -125,10 +529,15 @@ Usage:
   termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter]
 
 Description:
-  Send text to a resolved session target.
+  Send text to one resolved session target.
+  Usually call resolve first, then pass the exact handle or sessionId.
   --text sends one string argument.
   --stdin reads the full stdin stream and sends it as one payload.
   --no-enter is supported by iTerm2 only.
+
+Output:
+  JSON object with:
+    ok, action, newline, bytes, target, text
 
 Examples:
   termhub send --session iterm2:session:<uuid> --text 'npm test'
@@ -141,8 +550,12 @@ Usage:
   termhub capture --session <id|handle> [--app <app>] [--lines <n>]
 
 Description:
-  Capture the current visible buffer for a session.
+  Capture the current visible terminal contents for one resolved target.
   --lines trims the result to the last N lines after capture.
+
+Output:
+  JSON object with:
+    ok, action, target, text
 
 Examples:
   termhub capture --session iterm2:session:<uuid>
@@ -156,9 +569,33 @@ Usage:
 Description:
   Bring the owning window to the front and select the target tab/session.
 
+Output:
+  JSON object with:
+    ok, action, target, result
+
 Examples:
   termhub focus --session iterm2:session:<uuid>
   termhub focus --session terminal:session:545305:1
+`,
+  close: `termhub close
+
+Usage:
+  termhub close --session <id|handle> [--app <app>]
+
+Description:
+  Close the owning tab for one resolved target.
+  Use this when the user asks the AI to close a specific tab.
+  iTerm2 closes the tab natively.
+  Terminal closes the selected tab with the app's standard close shortcut after focusing it.
+  Busy tabs may still trigger the terminal app's own confirmation dialog.
+
+Output:
+  JSON object with:
+    ok, action, target, result
+
+Examples:
+  termhub close --session iterm2:session:<uuid>
+  termhub close --session terminal:session:545305:1
 `,
   doctor: `termhub doctor
 
@@ -172,6 +609,24 @@ Description:
 Examples:
   termhub doctor
   termhub doctor --app terminal --compact
+`,
+  spec: `termhub spec
+
+Usage:
+  termhub spec [--compact]
+
+Description:
+  Print the machine-readable termhub command contract for AI callers.
+  Includes:
+    supported apps
+    recommended workflow
+    command usage
+    option types
+    output fields
+
+Examples:
+  termhub spec
+  termhub spec --compact
 `,
 };
 
@@ -193,8 +648,10 @@ const COMMAND_OPTIONS = {
   ]),
   send: new Set(["app", "session", "text", "stdin", "enter"]),
   focus: new Set(["app", "session"]),
+  close: new Set(["app", "session"]),
   capture: new Set(["app", "session", "lines"]),
   doctor: new Set(["app"]),
+  spec: new Set([]),
 };
 
 function toCamelOption(optionName) {
@@ -482,6 +939,23 @@ async function handleFocus(options) {
   );
 }
 
+async function handleClose(options) {
+  const app = normalizeAppOption(options.app);
+  const sessionId = requireSessionOption(options, "close");
+  const target = await findSessionOrThrow(sessionId, app);
+  const result = await closeTarget(target);
+
+  writeJson(
+    {
+      ok: true,
+      action: "close",
+      target,
+      result,
+    },
+    options,
+  );
+}
+
 async function handleDoctor(options) {
   const snapshot = await getSnapshot({
     app: options.app,
@@ -530,6 +1004,10 @@ async function handleDoctor(options) {
   );
 }
 
+async function handleSpec(options) {
+  writeJson(buildCliSpec(), options);
+}
+
 async function main() {
   const parsed = parseArgv(process.argv.slice(2));
 
@@ -563,8 +1041,14 @@ async function main() {
     case "focus":
       await handleFocus(parsed.options);
       return;
+    case "close":
+      await handleClose(parsed.options);
+      return;
     case "doctor":
       await handleDoctor(parsed.options);
+      return;
+    case "spec":
+      await handleSpec(parsed.options);
       return;
     default:
       throw new CLIError(`Unknown command: ${parsed.command}`, {

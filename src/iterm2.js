@@ -179,6 +179,26 @@ on run argv
 end run
 `;
 
+const CLOSE_SCRIPT = `
+on run argv
+  if (count of argv) is not 2 then
+    error "expected window id and tab index" number 1002
+  end if
+
+  set targetWindowId to item 1 of argv
+  set targetTabIndex to item 2 of argv as integer
+
+  if application id "${PROVIDER.bundleId}" is not running then
+    error "iTerm2 is not running" number 1001
+  end if
+
+  tell application id "${PROVIDER.bundleId}"
+    close (tab targetTabIndex of window id targetWindowId)
+    return "ok"
+  end tell
+end run
+`;
+
 const RUNNING_SCRIPT = `return (application id "${PROVIDER.bundleId}" is running) as text`;
 
 function runAppleScript(script, args = []) {
@@ -387,5 +407,18 @@ export async function focusTarget(target) {
     ok: true,
     sessionId: target.sessionId,
     windowId: Number(windowId),
+  };
+}
+
+export async function closeTarget(target) {
+  await runAppleScript(CLOSE_SCRIPT, [String(target.windowId), String(target.tabIndex)]);
+
+  return {
+    ok: true,
+    sessionId: target.sessionId,
+    windowId: target.windowId,
+    tabIndex: target.tabIndex,
+    scope: "tab",
+    method: "native",
   };
 }

@@ -1,7 +1,7 @@
 {
   "name": "@duo121/termhub",
-  "version": "0.1.0",
-  "description": "AI-friendly CLI for inspecting and controlling macOS terminal sessions via AppleScript",
+  "version": "0.2.0",
+  "description": "AI-native CLI for inspecting and controlling macOS terminal tabs via AppleScript",
   "type": "module",
   "bin": {
     "termhub": "src/cli.js",
@@ -20,6 +20,14 @@
     "macos",
     "terminal"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/duo121/termhub.git"
+  },
+  "homepage": "https://github.com/duo121/termhub#readme",
+  "bugs": {
+    "url": "https://github.com/duo121/termhub/issues"
+  },
   "scripts": {
     "test": "node --test",
     "list": "node ./src/cli.js list",

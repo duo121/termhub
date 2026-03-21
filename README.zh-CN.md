@@ -2,153 +2,144 @@
 
 [English README](./README.md)
 
-`termhub` 是一个面向 macOS 的命令行工具，供 AI、脚本和开发者通过 AppleScript 检查并控制终端会话。
+`termhub` 是一个 AI 原生命令行工具，用来通过 AppleScript 检查和控制 macOS 终端标签页。
 
 - 主命令：`termhub`
-- 短别名：`thub`
+- 别名：`thub`
 - npm 包名：`@duo121/termhub`
 - 支持：`iTerm2`、`Terminal.app`
-- 主要输出格式：JSON
-
-## 它能做什么
-
-`termhub` 用一套命令同时覆盖 iTerm2 和苹果官方 Terminal。
-
-你可以用它：
-
-- 列出窗口、标签页、会话、标题、TTY 和句柄
-- 根据元数据定位目标会话
-- 向目标会话发送文本
-- 抓取会话内容
-- 聚焦到目标窗口和标签页
-- 用 `doctor` 检查本机环境
 
 ## 安装
-
-使用 npm 全局安装：
 
 ```bash
 npm install -g @duo121/termhub
 ```
 
-安装后验证：
+安装后检查：
 
 ```bash
 termhub --help
-thub --help
+termhub spec
 ```
 
-## 核心概念
+## 用户只需要做什么
 
-### App
+用户只需要用自然语言对 AI 提需求。
 
-`termhub` 支持两个后端：
+用户**不需要**学习这个 CLI。
 
-- `iterm2`
-- `terminal`
+典型提问方式：
 
-如果你想把命令限制在某一个终端里执行，使用 `--app`。
+- “调用 termhub，告诉我我现在开了哪些 iTerm2 标签页。”
+- “调用 termhub，把 iTerm2 里标题叫 Task1 的标签页关掉。”
+- “调用 termhub，读取我当前 Terminal 标签页最后 50 行。”
+- “调用 termhub，在标题叫 API 的标签页里执行 `npm test`。”
+- “调用 termhub，把标题叫 logs 的标签页切到前台。”
 
-### Session
+## AI 调用流程示例
 
-`termhub` 的主要操作对象是 session。
+### 1. 列出所有 iTerm2 标签页
 
-`--session` 同时支持两种值：
+用户对 AI 说：
 
-- 原生 session id
-- namespaced handle
+> 调用 termhub，告诉我我现在开了哪些 iTerm2 标签页。
 
-例如：
-
-```text
-iterm2:session:<UUID>
-terminal:session:<windowId>:<tabIndex>
-```
-
-### 当前状态
-
-`--current-window`、`--current-tab`、`--current-session` 都是在各自终端应用内部判断的。
-
-如果 iTerm2 和 Terminal 同时运行，建议显式加上 `--app`，结果会更确定。
-
-## 快速开始
-
-列出当前已知会话：
+AI 调用：
 
 ```bash
-termhub list
-termhub list --app terminal
+termhub list --app iterm2
 ```
 
-定位目标会话：
+AI 能拿到：
+
+- 窗口
+- 标签页
+- session handle
+- 标签标题
+- TTY
+
+### 2. 关闭标题为 `Task1` 的 iTerm2 标签页
+
+用户对 AI 说：
+
+> 调用 termhub，看一下我现在的 iTerm2 标签页，然后把标题叫 Task1 的那个关掉。
+
+AI 调用：
 
 ```bash
-termhub resolve --title codex
-termhub resolve --app iterm2 --window-id 543005 --tab-index 2
+termhub resolve --app iterm2 --title Task1
+termhub close --app iterm2 --session iterm2:session:<resolved-id>
+```
+
+规则：
+
+- AI 应该先 `resolve`，再执行动作。
+- 如果返回的 `count` 不是 `1`，AI 不应该猜，而应该继续缩小范围。
+
+### 3. 读取当前 Terminal 标签页最后 50 行
+
+用户对 AI 说：
+
+> 调用 termhub，读取我当前 Terminal 标签页最后 50 行。
+
+AI 调用：
+
+```bash
 termhub resolve --app terminal --current-window --current-tab --current-session
+termhub capture --app terminal --session terminal:session:<resolved-window-id>:<resolved-tab-index> --lines 50
 ```
 
-发送文本：
+### 4. 向标题为 `API` 的标签页发送命令
+
+用户对 AI 说：
+
+> 调用 termhub，在标题叫 API 的标签页里执行 npm test。
+
+AI 调用：
 
 ```bash
-termhub send --session iterm2:session:<UUID> --text 'npm test'
-printf 'echo one\necho two\n' | termhub send --session /dev/ttys058 --stdin --app terminal
+termhub resolve --title API
+termhub send --session <resolved-handle-or-session-id> --text 'npm test'
 ```
 
-抓取内容：
+### 5. 把标题为 `logs` 的标签页切到前台
+
+用户对 AI 说：
+
+> 调用 termhub，把标题叫 logs 的标签页切到前台。
+
+AI 调用：
 
 ```bash
-termhub capture --session terminal:session:545305:1 --lines 50
+termhub resolve --title logs
+termhub focus --session <resolved-handle-or-session-id>
 ```
 
-聚焦目标：
+## AI 应该如何使用 termhub
 
-```bash
-termhub focus --session terminal:session:545305:1
-```
+标准模式是：
 
-检查环境：
+1. 用户问“现在开了什么”时，用 `list`
+2. 用户通过标题、TTY、当前标签页、窗口 id、handle 指目标时，用 `resolve`
+3. 目标唯一后，再调用 `send`、`capture`、`focus`、`close`
+4. 不确定应用状态或权限时，用 `doctor`
 
-```bash
-termhub doctor
-```
+给 AI 的规则：
 
-## 帮助
+- 优先读取 `termhub spec`，这是机器可读的命令契约
+- 需要文字说明时，读取 `termhub --help` 或 `termhub <command> --help`
+- 所有命令结果都会以 JSON 输出到 `stdout`
+- `--session` 可以传原生 session id，也可以传 namespaced handle
+- 如果 `resolve` 返回 `count: 0` 或 `count > 1`，应该继续缩小条件或追问用户
+- 当 `iTerm2` 和 `Terminal` 同时运行时，涉及当前标签页判断时应显式加上 `--app`
 
-每个命令都支持 `--help`：
+## 命令
 
-```bash
-termhub --help
-termhub list --help
-termhub resolve --help
-termhub send --help
-termhub capture --help
-termhub focus --help
-termhub doctor --help
-```
-
-## 输出
-
-`termhub list` 返回嵌套 JSON，主要包含：
-
-- `frontmostApp`
-- `apps[]`
-- `windows[].tabs[].sessions[]`
-
-`termhub resolve` 返回扁平化的 `matches[]` 数组。每个 match 通常包含：
-
-- `app`
-- `sessionId`
-- `handle`
-- `tty`
-- `name`
-- `windowId`
-- `tabIndex`
-- `sessionIndex`
-
-## 使用说明
-
-- 当 iTerm2 和 Terminal 同时运行时，如果你需要精确的当前状态查询，请加 `--app`
-- iTerm2 支持带回车和不带回车发送
-- Terminal 只支持带回车发送，`--no-enter` 会被拒绝
-- 主要命令结果会以 JSON 输出到 `stdout`
+- `list`：发现 app、窗口、标签页、session、标题、TTY、handle
+- `resolve`：把用户描述变成精确匹配的 session
+- `send`：向目标标签页发送文本
+- `capture`：读取当前可见终端内容
+- `focus`：切换到目标标签页
+- `close`：关闭已定位目标所属的标签页
+- `doctor`：检查平台、运行状态和自动化可用性
+- `spec`：输出机器可读的命令与 JSON 契约

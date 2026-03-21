@@ -123,3 +123,8 @@ export async function focusTarget(target) {
   const provider = getProviderByApp(target.app);
   return provider.focusTarget(target);
 }
+
+export async function closeTarget(target) {
+  const provider = getProviderByApp(target.app);
+  return provider.closeTarget(target);
+}
