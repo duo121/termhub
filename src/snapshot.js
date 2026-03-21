@@ -7,6 +7,16 @@ export const APP_ALIASES = Object.freeze({
   appleterminal: "terminal",
   "apple-terminal": "terminal",
   "apple_terminal": "terminal",
+  "windows-terminal": "windows-terminal",
+  windows_terminal: "windows-terminal",
+  windowsterminal: "windows-terminal",
+  wt: "windows-terminal",
+  cmd: "cmd",
+  "cmd.exe": "cmd",
+  cmdexe: "cmd",
+  commandprompt: "cmd",
+  "command-prompt": "cmd",
+  command_prompt: "cmd",
 });
 
 export function normalizeAppName(value) {
@@ -18,7 +28,7 @@ export function normalizeAppName(value) {
   return APP_ALIASES[normalized] ?? null;
 }
 
-export function createProviderSnapshot({ app, displayName, bundleId, running = true }) {
+export function createProviderSnapshot({ app, displayName, bundleId = null, running = true }) {
   return {
     ok: true,
     app,

@@ -1,7 +1,7 @@
 {
   "name": "@duo121/termhub",
-  "version": "0.2.0",
-  "description": "AI-native CLI for inspecting and controlling macOS terminal tabs via AppleScript",
+  "version": "0.3.0",
+  "description": "AI-native CLI for inspecting and controlling terminal tabs on macOS and Windows",
   "type": "module",
   "bin": {
     "termhub": "src/cli.js",
@@ -16,8 +16,12 @@
     "ai",
     "applescript",
     "cli",
+    "cmd",
     "iterm2",
     "macos",
+    "powershell",
+    "windows",
+    "windows-terminal",
     "terminal"
   ],
   "repository": {
@@ -40,7 +44,8 @@
     "node": ">=20"
   },
   "os": [
-    "darwin"
+    "darwin",
+    "win32"
   ],
   "publishConfig": {
     "access": "public"

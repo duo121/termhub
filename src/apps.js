@@ -1,14 +1,34 @@
 import { spawn } from "node:child_process";
 
 import { CLIError } from "./errors.js";
+import * as cmd from "./cmd.js";
 import * as iTerm2 from "./iterm2.js";
 import * as terminal from "./terminal.js";
+import * as windowsTerminal from "./windows-terminal.js";
+import {
+  buildPowerShellJsonCommand,
+  getWin32ErrorMessage,
+  mapWin32Error,
+  runPowerShellJson,
+} from "./win32.js";
 import { createProviderSnapshot, mergeSnapshots, normalizeAppName } from "./snapshot.js";
 
-const PROVIDERS = [iTerm2, terminal];
-const PROVIDER_MAP = new Map(PROVIDERS.map((provider) => [provider.PROVIDER.app, provider]));
+const PLATFORM_PROVIDERS = Object.freeze({
+  darwin: [iTerm2, terminal],
+  win32: [windowsTerminal, cmd],
+});
 
-export const SUPPORTED_APPS = PROVIDERS.map((provider) => provider.PROVIDER);
+export const CURRENT_PLATFORM = process.platform;
+export const SUPPORTED_PLATFORMS = Object.freeze(["darwin", "win32"]);
+export const SUPPORTED_APPS = Object.freeze(PLATFORM_PROVIDERS[CURRENT_PLATFORM] ?? []).map(
+  (provider) => provider.PROVIDER,
+);
+
+const PROVIDERS = SUPPORTED_APPS.map((appInfo) =>
+  (PLATFORM_PROVIDERS[CURRENT_PLATFORM] ?? []).find((provider) => provider.PROVIDER.app === appInfo.app),
+);
+
+const PROVIDER_MAP = new Map(PROVIDERS.map((provider) => [provider.PROVIDER.app, provider]));
 
 function runAppleScript(script) {
   return new Promise((resolve, reject) => {
@@ -39,30 +59,24 @@ function runAppleScript(script) {
   });
 }
 
-export function getProviderByApp(app) {
-  return PROVIDER_MAP.get(app) ?? null;
-}
+function ensureProvider(app) {
+  const provider = getProviderByApp(app);
 
-export function normalizeAppOption(value) {
-  if (value == null) {
-    return null;
-  }
-
-  const normalized = normalizeAppName(value);
-  if (!normalized) {
-    throw new CLIError(`Unknown app: ${value}`, {
-      code: "USAGE_ERROR",
+  if (!provider) {
+    throw new CLIError(`App is not supported on ${CURRENT_PLATFORM}: ${app}`, {
+      code: "UNSUPPORTED_APP",
       exitCode: 2,
       details: {
-        supportedApps: SUPPORTED_APPS.map((provider) => provider.app),
+        platform: CURRENT_PLATFORM,
+        supportedApps: SUPPORTED_APPS.map((entry) => entry.app),
       },
     });
   }
 
-  return normalized;
+  return provider;
 }
 
-export async function getFrontmostApp() {
+async function getDarwinFrontmostApp() {
   try {
     const [bundleId, name] = await Promise.all([
       runAppleScript(
@@ -84,9 +98,97 @@ export async function getFrontmostApp() {
   }
 }
 
+async function getWin32FrontmostApp() {
+  try {
+    const payload = await runPowerShellJson(
+      buildPowerShellJsonCommand(
+        `
+$windowHandle = Get-TermhubForegroundHandle
+if ($windowHandle -eq 0) {
+  $payload = [pscustomobject]@{
+    processName = $null
+  }
+} else {
+  $processId = Get-TermhubProcessIdFromHandle $windowHandle
+  $process = if ($processId -eq 0) { $null } else { Get-Process -Id $processId -ErrorAction SilentlyContinue }
+  $payload = [pscustomobject]@{
+    processName = ConvertTo-TermhubText $process.ProcessName
+  }
+}
+
+$payload | ConvertTo-Json -Depth 6 -Compress
+      `,
+        { uiAutomation: false },
+      ),
+    );
+
+    const processName = String(payload?.processName ?? "").toLowerCase();
+    if (!processName) {
+      return null;
+    }
+
+    const provider = PROVIDERS.find((entry) =>
+      Array.isArray(entry.PROVIDER.processNames)
+        ? entry.PROVIDER.processNames.some((name) => name.toLowerCase() === processName)
+        : false,
+    );
+
+    return {
+      app: provider?.PROVIDER.app ?? null,
+      displayName: provider?.PROVIDER.displayName ?? payload.processName ?? null,
+      bundleId: null,
+    };
+  } catch (error) {
+    const mapped = mapWin32Error(getWin32ErrorMessage(error), {
+      displayName: "Windows terminal app",
+    });
+    if (mapped.code === "POWERSHELL_NOT_FOUND" || mapped.code === "POWERSHELL_FAILED") {
+      return null;
+    }
+
+    return null;
+  }
+}
+
+export function getProviderByApp(app) {
+  return PROVIDER_MAP.get(app) ?? null;
+}
+
+export function normalizeAppOption(value) {
+  if (value == null) {
+    return null;
+  }
+
+  const normalized = normalizeAppName(value);
+  if (!normalized || !PROVIDER_MAP.has(normalized)) {
+    throw new CLIError(`Unknown app: ${value}`, {
+      code: "USAGE_ERROR",
+      exitCode: 2,
+      details: {
+        platform: CURRENT_PLATFORM,
+        supportedApps: SUPPORTED_APPS.map((provider) => provider.app),
+      },
+    });
+  }
+
+  return normalized;
+}
+
+export async function getFrontmostApp() {
+  if (CURRENT_PLATFORM === "darwin") {
+    return getDarwinFrontmostApp();
+  }
+
+  if (CURRENT_PLATFORM === "win32") {
+    return getWin32FrontmostApp();
+  }
+
+  return null;
+}
+
 export async function getSnapshot(options = {}) {
   const app = normalizeAppOption(options.app);
-  const selectedProviders = app ? [getProviderByApp(app)] : PROVIDERS;
+  const selectedProviders = app ? [ensureProvider(app)] : PROVIDERS;
   const frontmostApp = await getFrontmostApp();
   const snapshots = [];
 
@@ -110,21 +212,21 @@ export async function getSnapshot(options = {}) {
 }
 
 export async function sendTextToTarget(target, text, options = {}) {
-  const provider = getProviderByApp(target.app);
+  const provider = ensureProvider(target.app);
   return provider.sendTextToTarget(target, text, options);
 }
 
 export async function captureTarget(target) {
-  const provider = getProviderByApp(target.app);
+  const provider = ensureProvider(target.app);
   return provider.captureTarget(target);
 }
 
 export async function focusTarget(target) {
-  const provider = getProviderByApp(target.app);
+  const provider = ensureProvider(target.app);
   return provider.focusTarget(target);
 }
 
 export async function closeTarget(target) {
-  const provider = getProviderByApp(target.app);
+  const provider = ensureProvider(target.app);
   return provider.closeTarget(target);
 }

@@ -2,12 +2,13 @@
 
 [中文说明](./README.zh-CN.md)
 
-`termhub` is an AI-native macOS CLI for inspecting and controlling terminal tabs through AppleScript.
+`termhub` is an AI-native CLI for inspecting and controlling terminal windows, tabs, sessions, handles, and titles.
 
 - Command: `termhub`
 - Alias: `thub`
 - npm package: `@duo121/termhub`
-- Supported apps: `iTerm2`, `Terminal.app`
+- macOS backends: `iTerm2`, `Terminal`
+- Windows backends: `Windows Terminal`, `Command Prompt (CMD)`
 
 ## Install
 
@@ -15,7 +16,7 @@
 npm install -g @duo121/termhub
 ```
 
-Then check:
+Then let the AI read the contract:
 
 ```bash
 termhub --help
@@ -24,25 +25,23 @@ termhub spec
 
 ## What The User Needs To Do
 
-The user should speak to the AI in natural language.
+The user only needs to ask the AI in natural language.
 
-The user does **not** need to learn the CLI.
+The user does not need to learn the CLI.
 
-Typical user requests:
+Typical requests:
 
-- "Use termhub to show me all my open iTerm2 tabs."
-- "Use termhub to close the iTerm2 tab titled Task1."
+- "Use termhub to show me every iTerm2 tab I have open."
+- "Use termhub to close the tab named Task1."
 - "Use termhub to read the last 50 lines from my current Terminal tab."
-- "Use termhub to send `npm test` to the tab titled API."
-- "Use termhub to focus the tab titled logs."
+- "Use termhub to run `npm test` in the Windows Terminal tab called API."
+- "Use termhub to bring the CMD window named deploy to the front."
 
-## Example AI Workflows
-
-### 1. List all open iTerm2 tabs
+## Scenario 1: Show Everything That Is Open
 
 User asks the AI:
 
-> Use termhub to show me all my open iTerm2 tabs.
+> Use termhub to show me every iTerm2 tab I have open.
 
 AI workflow:
 
@@ -50,33 +49,33 @@ AI workflow:
 termhub list --app iterm2
 ```
 
-What the AI gets back:
+The AI gets JSON with:
 
-- Windows
-- Tabs
-- Session handles
-- Tab titles
-- TTYs
+- windows
+- tabs
+- sessions
+- handles
+- tab titles
+- TTYs when the backend exposes them
 
-### 2. Close the iTerm2 tab titled `Task1`
+## Scenario 2: Close One Specific Tab
 
 User asks the AI:
 
-> Use termhub to look at my iTerm2 tabs and close the one titled Task1.
+> Use termhub to close the tab named Task1.
 
 AI workflow:
 
 ```bash
-termhub resolve --app iterm2 --title Task1
-termhub close --app iterm2 --session iterm2:session:<resolved-id>
+termhub resolve --title Task1
+termhub close --session <resolved-handle-or-session-id>
 ```
 
-Rule:
+The AI should not guess.
 
-- The AI should resolve the target first.
-- If `count` is not `1`, the AI should refine the selector instead of guessing.
+If `resolve` returns `count: 0` or `count > 1`, the AI should refine the selector or ask a follow-up question.
 
-### 3. Read the last 50 lines from the current Terminal tab
+## Scenario 3: Read The Current Tab
 
 User asks the AI:
 
@@ -86,60 +85,51 @@ AI workflow:
 
 ```bash
 termhub resolve --app terminal --current-window --current-tab --current-session
-termhub capture --app terminal --session terminal:session:<resolved-window-id>:<resolved-tab-index> --lines 50
+termhub capture --app terminal --session terminal:session:<window-id>:<tab-index> --lines 50
 ```
 
-### 4. Send a command into the tab titled `API`
+## Scenario 4: Send A Command Into Windows Terminal
 
 User asks the AI:
 
-> Use termhub to run npm test in the tab titled API.
+> Use termhub to run npm test in the Windows Terminal tab called API.
 
 AI workflow:
 
 ```bash
-termhub resolve --title API
-termhub send --session <resolved-handle-or-session-id> --text 'npm test'
+termhub resolve --app windows-terminal --title API
+termhub send --app windows-terminal --session windows-terminal:session:<window-handle>:<tab-index> --text "npm test"
 ```
 
-### 5. Bring the tab titled `logs` to the front
+## Scenario 5: Focus A CMD Window
 
 User asks the AI:
 
-> Use termhub to focus the tab titled logs.
+> Use termhub to bring the CMD window named deploy to the front.
 
 AI workflow:
 
 ```bash
-termhub resolve --title logs
-termhub focus --session <resolved-handle-or-session-id>
+termhub resolve --app cmd --title deploy
+termhub focus --app cmd --session cmd:session:<pid>
 ```
 
 ## How The AI Should Use termhub
 
 The standard pattern is:
 
-1. `list` when the user asks what is open.
-2. `resolve` when the user names a target by title, tty, current tab, window id, or handle.
-3. `send`, `capture`, `focus`, or `close` only after the target is unambiguous.
-4. `doctor` when the app state or automation permissions are unclear.
+1. Use `list` when the user asks what is open.
+2. Use `resolve` when the user describes a target by title, TTY, current tab, window id, or handle.
+3. Use `send`, `capture`, `focus`, or `close` only after the target is exact.
+4. Use `doctor` when platform, permissions, or automation state are unclear.
 
-Rules for the AI:
+Rules the AI should follow:
 
-- Prefer `termhub spec` for the machine-readable command contract.
-- Use `termhub --help` or `termhub <command> --help` for human-readable clarification.
+- `termhub spec` is the machine-readable source of truth.
+- `termhub --help` and `termhub <command> --help` are the human-readable source of truth.
 - All command results are printed as JSON to `stdout`.
-- `--session` accepts either a native session id or a namespaced handle.
-- If `resolve` returns `count: 0` or `count > 1`, refine selectors or ask a follow-up question.
-- When both `iTerm2` and `Terminal` are running, add `--app` for deterministic current-tab queries.
-
-## Commands
-
-- `list`: discover apps, windows, tabs, sessions, titles, TTYs, and handles
-- `resolve`: turn user intent into exact session matches
-- `send`: send text into one target
-- `capture`: read visible terminal contents
-- `focus`: select a target tab and bring it forward
-- `close`: close the owning tab of a resolved target
-- `doctor`: inspect platform, running apps, and automation readiness
-- `spec`: print the machine-readable command and JSON contract
+- `--session` accepts either a session id or a namespaced handle.
+- When multiple terminal backends are running, the AI should add `--app` for deterministic targeting.
+- Apple Terminal rejects `--no-enter`.
+- Windows Terminal and CMD use PowerShell/UI Automation for focus, send, capture, and close.
+- Windows capture is best-effort and depends on visible text being readable through UI Automation.

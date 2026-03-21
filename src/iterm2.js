@@ -7,6 +7,8 @@ export const PROVIDER = Object.freeze({
   app: "iterm2",
   displayName: "iTerm2",
   bundleId: "com.googlecode.iterm2",
+  platform: "darwin",
+  automation: "applescript",
 });
 
 const FIELD_SEPARATOR = String.fromCharCode(31);

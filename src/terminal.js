@@ -7,6 +7,8 @@ export const PROVIDER = Object.freeze({
   app: "terminal",
   displayName: "Terminal",
   bundleId: "com.apple.Terminal",
+  platform: "darwin",
+  automation: "applescript",
 });
 
 const FIELD_SEPARATOR = String.fromCharCode(31);

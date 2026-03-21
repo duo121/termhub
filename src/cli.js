@@ -2,7 +2,9 @@
 
 import { CLIError, toErrorPayload } from "./errors.js";
 import {
+  CURRENT_PLATFORM,
   SUPPORTED_APPS,
+  SUPPORTED_PLATFORMS,
   captureTarget,
   closeTarget,
   focusTarget,
@@ -32,6 +34,70 @@ const MATCH_FIELDS = [
   "handle",
 ];
 
+const SUPPORTED_APP_VALUES = SUPPORTED_APPS.map((app) => app.app);
+
+function hasSupportedApp(app) {
+  return SUPPORTED_APP_VALUES.includes(app);
+}
+
+function buildSupportedAppsSpec() {
+  return SUPPORTED_APPS.map((app) => ({
+    app: app.app,
+    displayName: app.displayName,
+    platform: app.platform ?? CURRENT_PLATFORM,
+    automation: app.automation ?? null,
+    bundleId: app.bundleId ?? null,
+    processNames: app.processNames ?? [],
+  }));
+}
+
+function buildSendRules() {
+  const rules = ["Exactly one of --text or --stdin is required."];
+
+  if (hasSupportedApp("terminal")) {
+    rules.push("Terminal rejects --no-enter.");
+  }
+
+  if (hasSupportedApp("windows-terminal") || hasSupportedApp("cmd")) {
+    rules.push("Windows backends send input by focusing the target and using keyboard automation.");
+  }
+
+  return rules;
+}
+
+function buildCloseNotes() {
+  const notes = [];
+
+  if (hasSupportedApp("iterm2")) {
+    notes.push("iTerm2 closes the target tab through its native AppleScript close command.");
+  }
+
+  if (hasSupportedApp("terminal")) {
+    notes.push("Terminal closes the selected tab with the app's standard close shortcut after focusing it.");
+    notes.push("Busy Terminal tabs may still trigger the app's own confirmation dialog.");
+  }
+
+  if (hasSupportedApp("windows-terminal")) {
+    notes.push("Windows Terminal closes the selected tab with its standard Ctrl+Shift+W shortcut after focusing it.");
+  }
+
+  if (hasSupportedApp("cmd")) {
+    notes.push("Command Prompt closes the target window through CloseMainWindow, with Alt+F4 as a fallback.");
+  }
+
+  return notes;
+}
+
+function buildCaptureNotes() {
+  const notes = [];
+
+  if (hasSupportedApp("windows-terminal") || hasSupportedApp("cmd")) {
+    notes.push("Windows capture is best-effort and depends on UI Automation being able to read visible text.");
+  }
+
+  return notes;
+}
+
 function buildCliSpec() {
   return {
     ok: true,
@@ -42,12 +108,10 @@ function buildCliSpec() {
       aliases: ["thub"],
     },
     purpose:
-      "AI-native macOS terminal control CLI for discovering, resolving, focusing, capturing, sending to, and closing terminal tabs through AppleScript.",
-    supportedApps: SUPPORTED_APPS.map((app) => ({
-      app: app.app,
-      displayName: app.displayName,
-      bundleId: app.bundleId,
-    })),
+      "AI-native terminal control CLI for macOS and Windows. It discovers, resolves, focuses, captures, sends to, and closes terminal windows and tabs through AppleScript or PowerShell/UI Automation depending on the backend.",
+    platform: CURRENT_PLATFORM,
+    supportedPlatforms: SUPPORTED_PLATFORMS,
+    supportedApps: buildSupportedAppsSpec(),
     recommendedWorkflow: [
       "Use list when the user asks what is open right now.",
       "Use resolve when the user identifies a target by title, tty, current tab, window id, or handle.",
@@ -60,7 +124,7 @@ function buildCliSpec() {
       transport: "stdout JSON",
       selectors: "All resolve selectors are ANDed together.",
       sessionSpecifier:
-        "--session accepts either a native session id or a namespaced handle such as iterm2:session:<uuid> or terminal:session:<windowId>:<tabIndex>.",
+        "--session accepts either a backend session id or a namespaced handle such as iterm2:session:<uuid>, terminal:session:<windowId>:<tabIndex>, windows-terminal:session:<windowHandle>:<tabIndex>, or cmd:session:<pid>.",
       errors: {
         ok: false,
         error: {
@@ -80,7 +144,7 @@ function buildCliSpec() {
             name: "--app",
             type: "string",
             required: false,
-            values: ["iterm2", "terminal"],
+            values: SUPPORTED_APP_VALUES,
             description: "Restrict discovery to one backend.",
           },
           {
@@ -112,7 +176,7 @@ function buildCliSpec() {
             name: "--app",
             type: "string",
             required: false,
-            values: ["iterm2", "terminal"],
+            values: SUPPORTED_APP_VALUES,
             description: "Restrict matching to one backend.",
           },
           {
@@ -199,14 +263,15 @@ function buildCliSpec() {
             name: "--app",
             type: "string",
             required: false,
-            values: ["iterm2", "terminal"],
+            values: SUPPORTED_APP_VALUES,
             description: "Restrict target lookup to one backend.",
           },
           {
             name: "--no-enter",
             type: "boolean",
             required: false,
-            description: "Do not append enter. Supported by iTerm2 only.",
+            description:
+              "Do not append enter. Apple Terminal rejects this option; iTerm2 and Windows backends accept it.",
           },
           {
             name: "--compact",
@@ -215,10 +280,7 @@ function buildCliSpec() {
             description: "Print JSON without indentation.",
           },
         ],
-        rules: [
-          "Exactly one of --text or --stdin is required.",
-          "Terminal rejects --no-enter.",
-        ],
+        rules: buildSendRules(),
         output: {
           topLevelFields: ["ok", "action", "newline", "bytes", "target", "text"],
           targetFields: MATCH_FIELDS,
@@ -238,7 +300,7 @@ function buildCliSpec() {
             name: "--app",
             type: "string",
             required: false,
-            values: ["iterm2", "terminal"],
+            values: SUPPORTED_APP_VALUES,
             description: "Restrict target lookup to one backend.",
           },
           {
@@ -258,10 +320,11 @@ function buildCliSpec() {
           topLevelFields: ["ok", "action", "target", "text"],
           targetFields: MATCH_FIELDS,
         },
+        notes: buildCaptureNotes(),
       },
       focus: {
         usage: "termhub focus --session <id|handle> [--app <app>]",
-        purpose: "Bring the owning window and tab to the front.",
+        purpose: "Bring the owning window and target tab or session to the front.",
         options: [
           {
             name: "--session",
@@ -273,7 +336,7 @@ function buildCliSpec() {
             name: "--app",
             type: "string",
             required: false,
-            values: ["iterm2", "terminal"],
+            values: SUPPORTED_APP_VALUES,
             description: "Restrict target lookup to one backend.",
           },
           {
@@ -290,7 +353,7 @@ function buildCliSpec() {
       },
       close: {
         usage: "termhub close --session <id|handle> [--app <app>]",
-        purpose: "Close the owning tab for one resolved target.",
+        purpose: "Close the owning tab or window for one resolved target.",
         options: [
           {
             name: "--session",
@@ -302,7 +365,7 @@ function buildCliSpec() {
             name: "--app",
             type: "string",
             required: false,
-            values: ["iterm2", "terminal"],
+            values: SUPPORTED_APP_VALUES,
             description: "Restrict target lookup to one backend.",
           },
           {
@@ -312,11 +375,7 @@ function buildCliSpec() {
             description: "Print JSON without indentation.",
           },
         ],
-        notes: [
-          "iTerm2 closes the target tab through its native AppleScript close command.",
-          "Terminal closes the selected tab with the app's standard close shortcut after focusing it.",
-          "Busy tabs may still trigger the terminal app's own confirmation dialog.",
-        ],
+        notes: buildCloseNotes(),
         output: {
           topLevelFields: ["ok", "action", "target", "result"],
           targetFields: MATCH_FIELDS,
@@ -330,7 +389,7 @@ function buildCliSpec() {
             name: "--app",
             type: "string",
             required: false,
-            values: ["iterm2", "terminal"],
+            values: SUPPORTED_APP_VALUES,
             description: "Restrict inspection to one backend.",
           },
           {
@@ -362,6 +421,8 @@ function buildCliSpec() {
             "specVersion",
             "cli",
             "purpose",
+            "platform",
+            "supportedPlatforms",
             "supportedApps",
             "recommendedWorkflow",
             "conventions",
@@ -373,10 +434,124 @@ function buildCliSpec() {
   };
 }
 
-const ROOT_HELP = `termhub (alias: thub)
+function formatBulletLines(items) {
+  return items.map((item) => `  - ${item}`).join("\n");
+}
 
-AI-native macOS terminal control CLI.
+function buildSessionIdentifierNotes() {
+  const notes = [];
+
+  if (hasSupportedApp("iterm2")) {
+    notes.push("iTerm2 sessionId is the native UUID reported by iTerm2.");
+  }
+
+  if (hasSupportedApp("terminal")) {
+    notes.push("Terminal sessionId is the tab tty, for example /dev/ttys058.");
+  }
+
+  if (hasSupportedApp("windows-terminal")) {
+    notes.push("Windows Terminal sessionId is synthetic: <windowHandle>:<tabIndex>.");
+  }
+
+  if (hasSupportedApp("cmd")) {
+    notes.push("Command Prompt sessionId is the owning cmd.exe process id.");
+  }
+
+  const handleExamples = [];
+  if (hasSupportedApp("iterm2")) {
+    handleExamples.push("iterm2:session:<uuid>");
+  }
+  if (hasSupportedApp("terminal")) {
+    handleExamples.push("terminal:session:<windowId>:<tabIndex>");
+  }
+  if (hasSupportedApp("windows-terminal")) {
+    handleExamples.push("windows-terminal:session:<windowHandle>:<tabIndex>");
+  }
+  if (hasSupportedApp("cmd")) {
+    handleExamples.push("cmd:session:<pid>");
+  }
+
+  notes.push(`Namespaced handle examples: ${handleExamples.join(", ")}.`);
+  notes.push("--session accepts either the sessionId or the namespaced handle.");
+  return notes;
+}
+
+function buildRootBackendNotes() {
+  const notes = [];
+
+  if (SUPPORTED_APP_VALUES.length > 1) {
+    notes.push("When multiple backends are running, add --app for precise current-* queries.");
+  }
+
+  notes.push("close targets the owning tab or window of the resolved session.");
+
+  if (hasSupportedApp("iterm2")) {
+    notes.push("iTerm2 supports send with or without enter.");
+  }
+
+  if (hasSupportedApp("terminal")) {
+    notes.push("Terminal supports send with enter only; --no-enter is rejected.");
+  }
+
+  if (hasSupportedApp("windows-terminal")) {
+    notes.push("Windows Terminal send, focus, capture, and close use PowerShell plus UI Automation.");
+  }
+
+  if (hasSupportedApp("cmd")) {
+    notes.push("Command Prompt is modeled as one tab and one session per window.");
+  }
+
+  return [...notes, ...buildCaptureNotes(), ...buildCloseNotes()];
+}
+
+function buildExamples() {
+  if (hasSupportedApp("windows-terminal")) {
+    return {
+      listApp: "windows-terminal",
+      resolve: "termhub resolve --app windows-terminal --title Task1",
+      send: "termhub send --session windows-terminal:session:<windowHandle>:1 --text 'npm test' --no-enter",
+      capture: "termhub capture --session windows-terminal:session:<windowHandle>:1 --lines 30",
+      focus: "termhub focus --session windows-terminal:session:<windowHandle>:1",
+      close: "termhub close --session windows-terminal:session:<windowHandle>:1",
+      stdin:
+        "Get-Content .\\commands.txt | termhub send --session cmd:session:<pid> --stdin --app cmd",
+      doctorApp: hasSupportedApp("cmd") ? "cmd" : "windows-terminal",
+    };
+  }
+
+  return {
+    listApp: hasSupportedApp("terminal") ? "terminal" : SUPPORTED_APP_VALUES[0] ?? "<app>",
+    resolve: hasSupportedApp("iterm2")
+      ? "termhub resolve --app iterm2 --title Task1"
+      : "termhub resolve --title Task1",
+    send: hasSupportedApp("iterm2")
+      ? "termhub send --session iterm2:session:<uuid> --text 'npm test'"
+      : "termhub send --session <id|handle> --text 'npm test'",
+    capture: hasSupportedApp("terminal")
+      ? "termhub capture --session terminal:session:545305:1 --lines 30"
+      : "termhub capture --session iterm2:session:<uuid> --lines 30",
+    focus: hasSupportedApp("iterm2")
+      ? "termhub focus --session iterm2:session:<uuid>"
+      : "termhub focus --session terminal:session:545305:1",
+    close: hasSupportedApp("terminal")
+      ? "termhub close --session terminal:session:545305:1"
+      : "termhub close --session iterm2:session:<uuid>",
+    stdin:
+      "printf 'echo one\\necho two\\n' | termhub send --session /dev/ttys058 --stdin --app terminal",
+    doctorApp: hasSupportedApp("terminal") ? "terminal" : "iterm2",
+  };
+}
+
+function buildRootHelp() {
+  const examples = buildExamples();
+
+  return `termhub (alias: thub)
+
+AI-native terminal control CLI for macOS and Windows.
 Use it when an AI needs to inspect, resolve, focus, capture, send to, or close terminal tabs.
+
+Current platform:
+  ${CURRENT_PLATFORM}
 
 Recommended AI workflow:
   1. termhub list
@@ -402,13 +577,13 @@ Command roles:
   send     Send text or stdin into one resolved target.
   capture  Read the current visible contents from one resolved target.
   focus    Bring the owning window and tab to the front.
-  close    Close the owning tab for one resolved target.
+  close    Close the owning tab or window for one resolved target.
   doctor   Diagnose platform, running apps, and automation readiness.
   spec     Print machine-readable command, option, and output schema data.
 
 Selectors for resolve:
   --app <app>             Restrict search to one backend.
-  --session <id|handle>   Match native session id or namespaced handle.
+  --session <id|handle>   Match a session id or namespaced handle.
   --tty <tty>             Match a tty, for example /dev/ttys055.
   --title <tab-title>     Match tab title.
   --name <session-name>   Match session name.
@@ -420,12 +595,7 @@ Selectors for resolve:
   --current-session       Match the selected session inside each app.
 
 Session ids and handles:
-  - iTerm2 sessionId is the native UUID reported by iTerm2.
-  - Terminal sessionId is the tab tty, for example /dev/ttys058.
-  - Every session also has a namespaced handle such as:
-      iterm2:session:<uuid>
-      terminal:session:<windowId>:<tabIndex>
-  - --session accepts either form.
+${formatBulletLines(buildSessionIdentifierNotes())}
 
 Output model:
   - list returns:
@@ -439,30 +609,31 @@ Output model:
       ${MATCH_FIELDS.join(", ")}
 
 Backend notes:
-  - When both iTerm2 and Terminal are running, add --app for precise current-* queries.
-  - iTerm2 supports send with or without enter.
-  - Terminal supports send with enter only; --no-enter is rejected.
-  - close targets the owning tab of the resolved session.
-  - Terminal close uses the app's normal close shortcut after focusing the target tab.
-  - Busy tabs may still trigger a native confirmation dialog inside the terminal app.
+${formatBulletLines(buildRootBackendNotes())}
 
 Examples:
   termhub spec
   termhub list
-  termhub list --app terminal
-  termhub resolve --app iterm2 --title Task1
-  termhub send --session iterm2:session:ABC-123 --text 'npm test'
-  printf 'echo one\\necho two\\n' | termhub send --session /dev/ttys058 --stdin --app terminal
-  termhub capture --session terminal:session:545305:1 --lines 30
-  termhub focus --session 44F0F7F2-7777-4D75-A0F0-7C7CE0974EEB
-  termhub close --session terminal:session:545305:1
+  termhub list --app ${examples.listApp}
+  ${examples.resolve}
+  ${examples.send}
+  ${examples.stdin}
+  ${examples.capture}
+  ${examples.focus}
+  ${examples.close}
 
-Supported app values:
-  ${SUPPORTED_APPS.map((app) => app.app).join(", ")}
+Supported app values on this machine:
+  ${SUPPORTED_APP_VALUES.join(", ") || "(none)"}
 `;
+}
 
-const COMMAND_HELP = {
-  list: `termhub list
+function buildCommandHelp() {
+  const examples = buildExamples();
+  const captureNotes = buildCaptureNotes();
+  const closeNotes = buildCloseNotes();
+
+  return {
+    list: `termhub list
 
 Usage:
   termhub list [--app <app>] [--compact]
@@ -479,13 +650,13 @@ Output:
 
 Examples:
   termhub list
-  termhub list --app iterm2
-  termhub list --app terminal --compact
+  termhub list --app ${examples.listApp}
+  termhub list --app ${examples.listApp} --compact
 
 Hint:
   Run termhub spec for the machine-readable field list.
 `,
-  resolve: `termhub resolve
+    resolve: `termhub resolve
 
 Usage:
   termhub resolve [selectors] [--compact]
@@ -517,13 +688,13 @@ Output:
 
 Examples:
   termhub resolve --title Task1
-  termhub resolve --app terminal --tty /dev/ttys058
-  termhub resolve --app iterm2 --current-window --current-tab --current-session
+  ${examples.resolve}
+  termhub resolve --app ${examples.listApp} --current-window --current-tab --current-session
 
 Hint:
   Use the returned handle or sessionId as the next command's --session value.
 `,
-  send: `termhub send
+    send: `termhub send
 
 Usage:
   termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter]
@@ -533,18 +704,18 @@ Description:
   Usually call resolve first, then pass the exact handle or sessionId.
   --text sends one string argument.
   --stdin reads the full stdin stream and sends it as one payload.
-  --no-enter is supported by iTerm2 only.
+  Apple Terminal rejects --no-enter. Other current backends accept it.
 
 Output:
   JSON object with:
     ok, action, newline, bytes, target, text
 
 Examples:
-  termhub send --session iterm2:session:<uuid> --text 'npm test'
-  termhub send --session /dev/ttys058 --app terminal --text 'echo hello'
-  printf 'echo one\\necho two\\n' | termhub send --session /dev/ttys058 --app terminal --stdin
+  ${examples.send}
+  termhub send --session <id|handle> --text 'echo hello'
+  ${examples.stdin}
 `,
-  capture: `termhub capture
+    capture: `termhub capture
 
 Usage:
   termhub capture --session <id|handle> [--app <app>] [--lines <n>]
@@ -552,52 +723,51 @@ Usage:
 Description:
   Capture the current visible terminal contents for one resolved target.
   --lines trims the result to the last N lines after capture.
+${captureNotes.length > 0 ? `\nNotes:\n${formatBulletLines(captureNotes)}` : ""}
 
 Output:
   JSON object with:
     ok, action, target, text
 
 Examples:
-  termhub capture --session iterm2:session:<uuid>
-  termhub capture --session terminal:session:545305:1 --lines 40
+  ${examples.capture}
+  termhub capture --session <id|handle> --lines 40
 `,
-  focus: `termhub focus
+    focus: `termhub focus
 
 Usage:
   termhub focus --session <id|handle> [--app <app>]
 
 Description:
-  Bring the owning window to the front and select the target tab/session.
+  Bring the owning window to the front and select the target tab or session.
 
 Output:
   JSON object with:
     ok, action, target, result
 
 Examples:
-  termhub focus --session iterm2:session:<uuid>
-  termhub focus --session terminal:session:545305:1
+  ${examples.focus}
+  termhub focus --session <id|handle>
 `,
-  close: `termhub close
+    close: `termhub close
 
 Usage:
   termhub close --session <id|handle> [--app <app>]
 
 Description:
-  Close the owning tab for one resolved target.
+  Close the owning tab or window for one resolved target.
   Use this when the user asks the AI to close a specific tab.
-  iTerm2 closes the tab natively.
-  Terminal closes the selected tab with the app's standard close shortcut after focusing it.
-  Busy tabs may still trigger the terminal app's own confirmation dialog.
+${closeNotes.length > 0 ? `\nNotes:\n${formatBulletLines(closeNotes)}` : ""}
 
 Output:
   JSON object with:
     ok, action, target, result
 
 Examples:
-  termhub close --session iterm2:session:<uuid>
-  termhub close --session terminal:session:545305:1
+  ${examples.close}
+  termhub close --session <id|handle>
 `,
-  doctor: `termhub doctor
+    doctor: `termhub doctor
 
 Usage:
   termhub doctor [--app <app>] [--compact]
@@ -608,9 +778,9 @@ Description:
 
 Examples:
   termhub doctor
-  termhub doctor --app terminal --compact
+  termhub doctor --app ${examples.doctorApp} --compact
 `,
-  spec: `termhub spec
+    spec: `termhub spec
 
 Usage:
   termhub spec [--compact]
@@ -618,6 +788,7 @@ Usage:
 Description:
   Print the machine-readable termhub command contract for AI callers.
   Includes:
+    platform
     supported apps
     recommended workflow
     command usage
@@ -628,7 +799,8 @@ Examples:
   termhub spec
   termhub spec --compact
 `,
-};
+  };
+}
 
 const GLOBAL_OPTIONS = new Set(["help", "compact"]);
 const COMMAND_OPTIONS = {
@@ -724,11 +896,14 @@ function parseArgv(argv) {
 }
 
 function getHelpText(command) {
+  const rootHelp = buildRootHelp();
+  const commandHelp = buildCommandHelp();
+
   if (!command || command === "help") {
-    return ROOT_HELP;
+    return rootHelp;
   }
 
-  return COMMAND_HELP[command] ?? ROOT_HELP;
+  return commandHelp[command] ?? rootHelp;
 }
 
 function assertKnownCommand(command) {
@@ -964,8 +1139,8 @@ async function handleDoctor(options) {
   const checks = [
     {
       name: "platform",
-      ok: process.platform === "darwin",
-      value: process.platform,
+      ok: SUPPORTED_PLATFORMS.includes(CURRENT_PLATFORM),
+      value: CURRENT_PLATFORM,
     },
     {
       name: "supported_apps",
