@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { readFileSync } from "node:fs";
+
 import { CLIError, toErrorPayload } from "./errors.js";
 import {
   CURRENT_PLATFORM,
@@ -13,6 +15,10 @@ import {
   sendTextToTarget,
 } from "./apps.js";
 import { filterSessions, resolveSingleSession } from "./snapshot.js";
+
+const PACKAGE_VERSION = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+).version;
 
 const MATCH_FIELDS = [
   "app",
@@ -79,6 +85,7 @@ function buildCloseNotes() {
 
   if (hasSupportedApp("windows-terminal")) {
     notes.push("Windows Terminal closes the selected tab with its standard Ctrl+Shift+W shortcut after focusing it.");
+    notes.push("If the user changed Windows Terminal keybindings, close may fail until the default shortcut is restored or a native automation path is added.");
   }
 
   if (hasSupportedApp("cmd")) {
@@ -92,7 +99,7 @@ function buildCaptureNotes() {
   const notes = [];
 
   if (hasSupportedApp("windows-terminal") || hasSupportedApp("cmd")) {
-    notes.push("Windows capture is best-effort and depends on UI Automation being able to read visible text.");
+    notes.push("Windows capture is best-effort and only reads text that UI Automation can see in the currently visible window.");
   }
 
   return notes;
@@ -106,6 +113,7 @@ function buildCliSpec() {
     cli: {
       name: "termhub",
       aliases: ["thub"],
+      version: PACKAGE_VERSION,
     },
     purpose:
       "AI-native terminal control CLI for macOS and Windows. It discovers, resolves, focuses, captures, sends to, and closes terminal windows and tabs through AppleScript or PowerShell/UI Automation depending on the backend.",
@@ -561,6 +569,7 @@ Recommended AI workflow:
   5. termhub spec for the machine-readable command and JSON contract
 
 Usage:
+  termhub --version
   termhub list [--app <app>] [--compact]
   termhub resolve [selectors] [--compact]
   termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter]
@@ -612,6 +621,7 @@ Backend notes:
 ${formatBulletLines(buildRootBackendNotes())}
 
 Examples:
+  termhub --version
   termhub spec
   termhub list
   termhub list --app ${examples.listApp}
@@ -834,6 +844,14 @@ function parseArgv(argv) {
   if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") {
     return {
       command: "help",
+      options: {},
+      positionals: [],
+    };
+  }
+
+  if (argv[0] === "--version" || argv[0] === "-v" || argv[0] === "version") {
+    return {
+      command: "version",
       options: {},
       positionals: [],
     };
@@ -1188,6 +1206,11 @@ async function main() {
 
   if (parsed.command === "help") {
     process.stdout.write(getHelpText("help"));
+    return;
+  }
+
+  if (parsed.command === "version") {
+    process.stdout.write(`${PACKAGE_VERSION}\n`);
     return;
   }
 
