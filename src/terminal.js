@@ -9,6 +9,21 @@ export const PROVIDER = Object.freeze({
   bundleId: "com.apple.Terminal",
   platform: "darwin",
   automation: "applescript",
+  capabilities: Object.freeze({
+    list: true,
+    resolve: true,
+    send: true,
+    sendWithoutEnter: false,
+    capture: true,
+    captureMode: "native",
+    focus: true,
+    close: true,
+    closeScope: "tab",
+    tty: true,
+    titleMatch: ["exact", "contains"],
+    nameMatch: ["exact", "contains"],
+    dryRun: ["send", "focus", "close"],
+  }),
 });
 
 const FIELD_SEPARATOR = String.fromCharCode(31);

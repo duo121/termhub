@@ -28,12 +28,19 @@ export function normalizeAppName(value) {
   return APP_ALIASES[normalized] ?? null;
 }
 
-export function createProviderSnapshot({ app, displayName, bundleId = null, running = true }) {
+export function createProviderSnapshot({
+  app,
+  displayName,
+  bundleId = null,
+  capabilities = null,
+  running = true,
+}) {
   return {
     ok: true,
     app,
     displayName,
     bundleId,
+    capabilities,
     running,
     counts: {
       windows: 0,
@@ -62,6 +69,7 @@ export function mergeSnapshots(providerSnapshots, { frontmostApp = null } = {}) 
       app: snapshot.app,
       displayName: snapshot.displayName,
       bundleId: snapshot.bundleId,
+      capabilities: snapshot.capabilities,
       running: snapshot.running,
       counts: snapshot.counts,
     })),
@@ -111,6 +119,24 @@ export function flattenSessions(snapshot) {
 }
 
 export function filterSessions(snapshot, criteria) {
+  const toFoldedText = (value) =>
+    value == null ? null : String(value).trim().toLocaleLowerCase();
+
+  const matchesContains = (value, search) => {
+    if (!search) {
+      return true;
+    }
+
+    const foldedValue = toFoldedText(value);
+    const foldedSearch = toFoldedText(search);
+
+    if (!foldedValue || !foldedSearch) {
+      return false;
+    }
+
+    return foldedValue.includes(foldedSearch);
+  };
+
   return flattenSessions(snapshot).filter((session) => {
     if (
       criteria.sessionId &&
@@ -132,7 +158,15 @@ export function filterSessions(snapshot, criteria) {
       return false;
     }
 
+    if (!matchesContains(session.tabTitle, criteria.titleContains)) {
+      return false;
+    }
+
     if (criteria.name && session.name !== criteria.name) {
+      return false;
+    }
+
+    if (!matchesContains(session.name, criteria.nameContains)) {
       return false;
     }
 

@@ -129,7 +129,9 @@ AI 应该遵守这些规则：
 - `termhub --help` 和 `termhub <command> --help` 是人类可读的事实来源
 - 所有命令结果都会以 JSON 输出到 `stdout`
 - `--session` 可以传 session id，也可以传 namespaced handle
+- 当用户给的是模糊标题时，优先用 `--title-contains` 和 `--name-contains`
 - 当多个终端后端同时运行时，AI 应该显式加上 `--app`，避免误判
+- 当动作有风险，或者用户希望先确认时，先对 `send`、`focus`、`close` 使用 `--dry-run`
 - Apple Terminal 不支持 `--no-enter`
 - Windows Terminal 和 CMD 的 `focus`、`send`、`capture`、`close` 依赖 PowerShell / UI Automation
 - Windows 上的 `capture` 是 best-effort，前提是可见文本能被 UI Automation 读取到

@@ -54,6 +54,7 @@ function buildSupportedAppsSpec() {
     automation: app.automation ?? null,
     bundleId: app.bundleId ?? null,
     processNames: app.processNames ?? [],
+    capabilities: app.capabilities ?? null,
   }));
 }
 
@@ -131,6 +132,8 @@ function buildCliSpec() {
     conventions: {
       transport: "stdout JSON",
       selectors: "All resolve selectors are ANDed together.",
+      capabilities:
+        "Each supported app advertises a capabilities object so the AI can determine whether send, sendWithoutEnter, capture, focus, close, tty selectors, contains matching, and dry-run planning are supported before calling a mutating command.",
       sessionSpecifier:
         "--session accepts either a backend session id or a namespaced handle such as iterm2:session:<uuid>, terminal:session:<windowId>:<tabIndex>, windows-terminal:session:<windowHandle>:<tabIndex>, or cmd:session:<pid>.",
       errors: {
@@ -195,7 +198,19 @@ function buildCliSpec() {
           },
           { name: "--tty", type: "string", required: false, description: "Match an exact tty path." },
           { name: "--title", type: "string", required: false, description: "Match an exact tab title." },
+          {
+            name: "--title-contains",
+            type: "string",
+            required: false,
+            description: "Case-insensitive substring match against the tab title.",
+          },
           { name: "--name", type: "string", required: false, description: "Match an exact session name." },
+          {
+            name: "--name-contains",
+            type: "string",
+            required: false,
+            description: "Case-insensitive substring match against the session name.",
+          },
           {
             name: "--window-id",
             type: "integer",
@@ -246,7 +261,7 @@ function buildCliSpec() {
       },
       send: {
         usage:
-          "termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter]",
+          "termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter] [--dry-run]",
         purpose: "Send text into one resolved target.",
         options: [
           {
@@ -282,6 +297,12 @@ function buildCliSpec() {
               "Do not append enter. Apple Terminal rejects this option; iTerm2 and Windows backends accept it.",
           },
           {
+            name: "--dry-run",
+            type: "boolean",
+            required: false,
+            description: "Resolve the target and print the planned send action without executing it.",
+          },
+          {
             name: "--compact",
             type: "boolean",
             required: false,
@@ -290,7 +311,7 @@ function buildCliSpec() {
         ],
         rules: buildSendRules(),
         output: {
-          topLevelFields: ["ok", "action", "newline", "bytes", "target", "text"],
+          topLevelFields: ["ok", "action", "dryRun", "plan", "newline", "bytes", "target", "text"],
           targetFields: MATCH_FIELDS,
         },
       },
@@ -331,7 +352,7 @@ function buildCliSpec() {
         notes: buildCaptureNotes(),
       },
       focus: {
-        usage: "termhub focus --session <id|handle> [--app <app>]",
+        usage: "termhub focus --session <id|handle> [--app <app>] [--dry-run]",
         purpose: "Bring the owning window and target tab or session to the front.",
         options: [
           {
@@ -353,14 +374,20 @@ function buildCliSpec() {
             required: false,
             description: "Print JSON without indentation.",
           },
+          {
+            name: "--dry-run",
+            type: "boolean",
+            required: false,
+            description: "Resolve the target and print the planned focus action without executing it.",
+          },
         ],
         output: {
-          topLevelFields: ["ok", "action", "target", "result"],
+          topLevelFields: ["ok", "action", "dryRun", "plan", "target", "result"],
           targetFields: MATCH_FIELDS,
         },
       },
       close: {
-        usage: "termhub close --session <id|handle> [--app <app>]",
+        usage: "termhub close --session <id|handle> [--app <app>] [--dry-run]",
         purpose: "Close the owning tab or window for one resolved target.",
         options: [
           {
@@ -382,10 +409,16 @@ function buildCliSpec() {
             required: false,
             description: "Print JSON without indentation.",
           },
+          {
+            name: "--dry-run",
+            type: "boolean",
+            required: false,
+            description: "Resolve the target and print the planned close action without executing it.",
+          },
         ],
         notes: buildCloseNotes(),
         output: {
-          topLevelFields: ["ok", "action", "target", "result"],
+          topLevelFields: ["ok", "action", "dryRun", "plan", "target", "result"],
           targetFields: MATCH_FIELDS,
         },
       },
@@ -492,6 +525,7 @@ function buildRootBackendNotes() {
   }
 
   notes.push("close targets the owning tab or window of the resolved session.");
+  notes.push("Use --dry-run with send, focus, or close when the AI should preview the exact target and action before execution.");
 
   if (hasSupportedApp("iterm2")) {
     notes.push("iTerm2 supports send with or without enter.");
@@ -572,10 +606,10 @@ Usage:
   termhub --version | -v | -V
   termhub list [--app <app>] [--compact]
   termhub resolve [selectors] [--compact]
-  termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter]
+  termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter] [--dry-run]
   termhub capture --session <id|handle> [--app <app>] [--lines <n>]
-  termhub focus --session <id|handle> [--app <app>]
-  termhub close --session <id|handle> [--app <app>]
+  termhub focus --session <id|handle> [--app <app>] [--dry-run]
+  termhub close --session <id|handle> [--app <app>] [--dry-run]
   termhub doctor [--app <app>] [--compact]
   termhub spec [--compact]
   termhub <command> --help
@@ -595,7 +629,9 @@ Selectors for resolve:
   --session <id|handle>   Match a session id or namespaced handle.
   --tty <tty>             Match a tty, for example /dev/ttys055.
   --title <tab-title>     Match tab title.
+  --title-contains <txt>  Case-insensitive substring match for tab title.
   --name <session-name>   Match session name.
+  --name-contains <txt>   Case-insensitive substring match for session name.
   --window-id <id>        Match native window id.
   --window-index <n>      Match the app-local window index.
   --tab-index <n>         Match the app-local tab index.
@@ -677,7 +713,9 @@ Selectors:
   --session <id|handle>
   --tty <tty>
   --title <tab-title>
+  --title-contains <txt>
   --name <session-name>
+  --name-contains <txt>
   --window-id <id>
   --window-index <n>
   --tab-index <n>
@@ -699,6 +737,7 @@ Output:
 
 Examples:
   termhub resolve --title Task1
+  termhub resolve --title-contains task
   ${examples.resolve}
   termhub resolve --app ${examples.listApp} --current-window --current-tab --current-session
 
@@ -708,7 +747,7 @@ Hint:
     send: `termhub send
 
 Usage:
-  termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter]
+  termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter] [--dry-run]
 
 Description:
   Send text to one resolved session target.
@@ -716,13 +755,15 @@ Description:
   --text sends one string argument.
   --stdin reads the full stdin stream and sends it as one payload.
   Apple Terminal rejects --no-enter. Other current backends accept it.
+  --dry-run resolves the target and prints the planned send without writing to the terminal.
 
 Output:
   JSON object with:
-    ok, action, newline, bytes, target, text
+    ok, action, dryRun, plan, newline, bytes, target, text
 
 Examples:
   ${examples.send}
+  termhub send --session <id|handle> --text 'echo hello' --dry-run
   termhub send --session <id|handle> --text 'echo hello'
   ${examples.stdin}
 `,
@@ -747,35 +788,39 @@ Examples:
     focus: `termhub focus
 
 Usage:
-  termhub focus --session <id|handle> [--app <app>]
+  termhub focus --session <id|handle> [--app <app>] [--dry-run]
 
 Description:
   Bring the owning window to the front and select the target tab or session.
+  --dry-run resolves the target and prints the planned focus without changing the UI.
 
 Output:
   JSON object with:
-    ok, action, target, result
+    ok, action, dryRun, plan, target, result
 
 Examples:
   ${examples.focus}
+  termhub focus --session <id|handle> --dry-run
   termhub focus --session <id|handle>
 `,
     close: `termhub close
 
 Usage:
-  termhub close --session <id|handle> [--app <app>]
+  termhub close --session <id|handle> [--app <app>] [--dry-run]
 
 Description:
   Close the owning tab or window for one resolved target.
   Use this when the user asks the AI to close a specific tab.
+  --dry-run resolves the target and prints the planned close without executing it.
 ${closeNotes.length > 0 ? `\nNotes:\n${formatBulletLines(closeNotes)}` : ""}
 
 Output:
   JSON object with:
-    ok, action, target, result
+    ok, action, dryRun, plan, target, result
 
 Examples:
   ${examples.close}
+  termhub close --session <id|handle> --dry-run
   termhub close --session <id|handle>
 `,
     doctor: `termhub doctor
@@ -821,7 +866,9 @@ const COMMAND_OPTIONS = {
     "session",
     "tty",
     "title",
+    "titleContains",
     "name",
+    "nameContains",
     "windowId",
     "windowIndex",
     "tabIndex",
@@ -829,9 +876,9 @@ const COMMAND_OPTIONS = {
     "currentTab",
     "currentSession",
   ]),
-  send: new Set(["app", "session", "text", "stdin", "enter"]),
-  focus: new Set(["app", "session"]),
-  close: new Set(["app", "session"]),
+  send: new Set(["app", "session", "text", "stdin", "enter", "dryRun"]),
+  focus: new Set(["app", "session", "dryRun"]),
+  close: new Set(["app", "session", "dryRun"]),
   capture: new Set(["app", "session", "lines"]),
   doctor: new Set(["app"]),
   spec: new Set([]),
@@ -976,7 +1023,9 @@ function normalizeCriteria(options) {
     sessionId: typeof options.session === "string" ? options.session : null,
     tty: typeof options.tty === "string" ? options.tty : null,
     title: typeof options.title === "string" ? options.title : null,
+    titleContains: typeof options.titleContains === "string" ? options.titleContains : null,
     name: typeof options.name === "string" ? options.name : null,
+    nameContains: typeof options.nameContains === "string" ? options.nameContains : null,
     windowId:
       typeof options.windowId === "string" ? toInt(options.windowId, "window-id") : null,
     windowIndex:
@@ -1034,6 +1083,57 @@ async function findSessionOrThrow(sessionSpecifier, app) {
   return resolveSingleSession(snapshot, sessionSpecifier);
 }
 
+function getAppMetadata(app) {
+  return SUPPORTED_APPS.find((entry) => entry.app === app) ?? null;
+}
+
+function buildDryRunPlan(action, target, extra = {}) {
+  const appInfo = getAppMetadata(target.app);
+  const capabilities = appInfo?.capabilities ?? null;
+
+  if (action === "send") {
+    return {
+      app: target.app,
+      automation: appInfo?.automation ?? null,
+      capability: "send",
+      sendWithoutEnter: capabilities?.sendWithoutEnter ?? null,
+      description:
+        extra.newline === false
+          ? "Would send text without enter."
+          : "Would send text and append enter.",
+    };
+  }
+
+  if (action === "focus") {
+    return {
+      app: target.app,
+      automation: appInfo?.automation ?? null,
+      capability: "focus",
+      description: "Would focus the target window and select the resolved tab or session.",
+    };
+  }
+
+  if (action === "close") {
+    return {
+      app: target.app,
+      automation: appInfo?.automation ?? null,
+      capability: "close",
+      closeScope: capabilities?.closeScope ?? null,
+      destructive: true,
+      description:
+        capabilities?.closeScope === "window"
+          ? "Would close the owning window for the resolved target."
+          : "Would close the owning tab for the resolved target.",
+    };
+  }
+
+  return {
+    app: target.app,
+    automation: appInfo?.automation ?? null,
+    description: "Would execute the planned action.",
+  };
+}
+
 async function handleList(options) {
   const snapshot = await getSnapshot({
     app: options.app,
@@ -1083,12 +1183,30 @@ async function handleSend(options) {
   const target = await findSessionOrThrow(sessionId, app);
   const newline = options.enter !== false;
 
+  if (options.dryRun === true) {
+    writeJson(
+      {
+        ok: true,
+        action: "send",
+        dryRun: true,
+        plan: buildDryRunPlan("send", target, { newline }),
+        newline,
+        bytes: Buffer.byteLength(text, "utf8"),
+        target,
+        text,
+      },
+      options,
+    );
+    return;
+  }
+
   await sendTextToTarget(target, text, { newline });
 
   writeJson(
     {
       ok: true,
       action: "send",
+      dryRun: false,
       newline,
       bytes: Buffer.byteLength(text, "utf8"),
       target,
@@ -1124,6 +1242,21 @@ async function handleFocus(options) {
   const app = normalizeAppOption(options.app);
   const sessionId = requireSessionOption(options, "focus");
   const target = await findSessionOrThrow(sessionId, app);
+
+  if (options.dryRun === true) {
+    writeJson(
+      {
+        ok: true,
+        action: "focus",
+        dryRun: true,
+        plan: buildDryRunPlan("focus", target),
+        target,
+      },
+      options,
+    );
+    return;
+  }
+
   const result = await focusTarget(target);
   const focusedTarget = await findSessionOrThrow(sessionId, app);
 
@@ -1131,6 +1264,7 @@ async function handleFocus(options) {
     {
       ok: true,
       action: "focus",
+      dryRun: false,
       target: focusedTarget,
       result,
     },
@@ -1142,12 +1276,28 @@ async function handleClose(options) {
   const app = normalizeAppOption(options.app);
   const sessionId = requireSessionOption(options, "close");
   const target = await findSessionOrThrow(sessionId, app);
+
+  if (options.dryRun === true) {
+    writeJson(
+      {
+        ok: true,
+        action: "close",
+        dryRun: true,
+        plan: buildDryRunPlan("close", target),
+        target,
+      },
+      options,
+    );
+    return;
+  }
+
   const result = await closeTarget(target);
 
   writeJson(
     {
       ok: true,
       action: "close",
+      dryRun: false,
       target,
       result,
     },

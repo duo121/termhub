@@ -82,6 +82,22 @@ test("filterSessions supports multiple selectors", () => {
   assert.equal(byExactSession.length, 1);
 });
 
+test("filterSessions supports case-insensitive contains selectors", () => {
+  const snapshot = parseItermSnapshot(ITERM_SAMPLE);
+
+  const titleMatches = filterSessions(snapshot, {
+    titleContains: "LOG",
+  });
+  assert.equal(titleMatches.length, 1);
+  assert.equal(titleMatches[0].sessionId, "session-c");
+
+  const nameMatches = filterSessions(snapshot, {
+    nameContains: "npm",
+  });
+  assert.equal(nameMatches.length, 1);
+  assert.equal(nameMatches[0].sessionId, "session-b");
+});
+
 test("Terminal parser builds terminal-specific handles", () => {
   const snapshot = parseTerminalSnapshot(TERMINAL_SAMPLE);
 

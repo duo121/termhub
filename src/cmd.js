@@ -15,6 +15,21 @@ export const PROVIDER = Object.freeze({
   platform: "win32",
   automation: "powershell-uiautomation",
   processNames: ["cmd"],
+  capabilities: Object.freeze({
+    list: true,
+    resolve: true,
+    send: true,
+    sendWithoutEnter: true,
+    capture: true,
+    captureMode: "best-effort-visible-text",
+    focus: true,
+    close: true,
+    closeScope: "window",
+    tty: false,
+    titleMatch: ["exact", "contains"],
+    nameMatch: ["exact", "contains"],
+    dryRun: ["send", "focus", "close"],
+  }),
 });
 
 function toArray(value) {

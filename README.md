@@ -129,7 +129,9 @@ Rules the AI should follow:
 - `termhub --help` and `termhub <command> --help` are the human-readable source of truth.
 - All command results are printed as JSON to `stdout`.
 - `--session` accepts either a session id or a namespaced handle.
+- `--title-contains` and `--name-contains` are safer when the user gives an approximate label instead of an exact title.
 - When multiple terminal backends are running, the AI should add `--app` for deterministic targeting.
+- Use `--dry-run` before `send`, `focus`, or `close` when the user wants confirmation or when the action is high-risk.
 - Apple Terminal rejects `--no-enter`.
 - Windows Terminal and CMD use PowerShell/UI Automation for focus, send, capture, and close.
 - Windows capture is best-effort and depends on visible text being readable through UI Automation.

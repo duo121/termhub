@@ -16,6 +16,21 @@ export const PROVIDER = Object.freeze({
   platform: "win32",
   automation: "powershell-uiautomation",
   processNames: ["WindowsTerminal", "WindowsTerminalPreview"],
+  capabilities: Object.freeze({
+    list: true,
+    resolve: true,
+    send: true,
+    sendWithoutEnter: true,
+    capture: true,
+    captureMode: "best-effort-visible-text",
+    focus: true,
+    close: true,
+    closeScope: "tab",
+    tty: false,
+    titleMatch: ["exact", "contains"],
+    nameMatch: ["exact", "contains"],
+    dryRun: ["send", "focus", "close"],
+  }),
 });
 
 function toArray(value) {

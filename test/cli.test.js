@@ -16,6 +16,8 @@ test("root help advertises AI workflow, close, and spec", () => {
   assert.match(help, /Recommended AI workflow:/);
   assert.match(help, /macOS and Windows/);
   assert.match(help, /termhub --version \| -v \| -V/);
+  assert.match(help, /--title-contains <txt>/);
+  assert.match(help, /--dry-run/);
   assert.match(help, /termhub close --session <id\|handle> \[--app <app>\]/);
   assert.match(help, /termhub spec \[--compact\]/);
 });
@@ -29,7 +31,19 @@ test("spec command returns machine-readable command contract", () => {
   assert.match(payload.cli.version, /^\d+\.\d+\.\d+$/);
   assert.equal(payload.platform, process.platform);
   assert.equal(payload.supportedPlatforms.includes("win32"), true);
-  assert.equal(payload.commands.close.usage, "termhub close --session <id|handle> [--app <app>]");
+  assert.equal(payload.supportedApps[0].capabilities.send, true);
+  assert.equal(
+    payload.commands.resolve.options.some((option) => option.name === "--title-contains"),
+    true,
+  );
+  assert.equal(
+    payload.commands.send.options.some((option) => option.name === "--dry-run"),
+    true,
+  );
+  assert.equal(
+    payload.commands.close.usage,
+    "termhub close --session <id|handle> [--app <app>] [--dry-run]",
+  );
   assert.equal(payload.commands.resolve.output.matchFields.includes("handle"), true);
   assert.equal(payload.commands.send.rules.includes("Exactly one of --text or --stdin is required."), true);
 });
