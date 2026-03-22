@@ -569,7 +569,7 @@ Recommended AI workflow:
   5. termhub spec for the machine-readable command and JSON contract
 
 Usage:
-  termhub --version
+  termhub --version | -v | -V
   termhub list [--app <app>] [--compact]
   termhub resolve [selectors] [--compact]
   termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter]
@@ -622,6 +622,7 @@ ${formatBulletLines(buildRootBackendNotes())}
 
 Examples:
   termhub --version
+  termhub -V
   termhub spec
   termhub list
   termhub list --app ${examples.listApp}
@@ -849,7 +850,12 @@ function parseArgv(argv) {
     };
   }
 
-  if (argv[0] === "--version" || argv[0] === "-v" || argv[0] === "version") {
+  if (
+    argv[0] === "--version" ||
+    argv[0] === "-v" ||
+    argv[0] === "-V" ||
+    argv[0] === "version"
+  ) {
     return {
       command: "version",
       options: {},

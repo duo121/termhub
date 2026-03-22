@@ -15,7 +15,7 @@ test("root help advertises AI workflow, close, and spec", () => {
 
   assert.match(help, /Recommended AI workflow:/);
   assert.match(help, /macOS and Windows/);
-  assert.match(help, /termhub --version/);
+  assert.match(help, /termhub --version \| -v \| -V/);
   assert.match(help, /termhub close --session <id\|handle> \[--app <app>\]/);
   assert.match(help, /termhub spec \[--compact\]/);
 });
@@ -43,6 +43,12 @@ test("close help explains terminal-specific behavior", () => {
 
 test("version flag prints the package version as plain text", () => {
   const version = runCli(["--version"]).trim();
+
+  assert.match(version, /^\d+\.\d+\.\d+$/);
+});
+
+test("capital version flag prints the package version as plain text", () => {
+  const version = runCli(["-V"]).trim();
 
   assert.match(version, /^\d+\.\d+\.\d+$/);
 });
