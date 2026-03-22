@@ -81,6 +81,8 @@ function buildSupportedAppsSpec() {
 
 function buildSendRules() {
   const rules = ["Exactly one of --text or --stdin is required."];
+  rules.push("If neither --enter nor --no-enter is passed, send appends enter by default.");
+  rules.push("AI callers should prefer passing --enter or --no-enter explicitly.");
 
   if (getAppMetadata("terminal")?.capabilities?.sendWithoutEnter === false) {
     rules.push("Terminal rejects --no-enter.");
@@ -379,7 +381,7 @@ function buildCliSpec() {
       },
       send: {
         usage:
-          "termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter] [--dry-run]",
+          "termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--enter | --no-enter] [--dry-run]",
         purpose: "Send text into one resolved target.",
         options: [
           {
@@ -408,11 +410,18 @@ function buildCliSpec() {
             description: "Restrict target lookup to one backend.",
           },
           {
+            name: "--enter",
+            type: "boolean",
+            required: false,
+            description:
+              "Append enter after sending. This is the default behavior, but AI callers should pass it explicitly when submit-on-send is intended.",
+          },
+          {
             name: "--no-enter",
             type: "boolean",
             required: false,
             description:
-              "Do not append enter. Check supportedApps[].capabilities.sendWithoutEnter before using it.",
+              "Do not append enter. Use this when the payload should remain staged for a later real key press. Check supportedApps[].capabilities.sendWithoutEnter before using it.",
           },
           {
             name: "--dry-run",
@@ -790,7 +799,7 @@ Usage:
   termhub open [--app <app>] [--window | --tab] [--dry-run] [--compact]
   termhub list [--app <app>] [--compact]
   termhub resolve [selectors] [--compact]
-  termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter] [--dry-run]
+  termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--enter | --no-enter] [--dry-run]
   termhub press --session <id|handle> --key <key> [--app <app>] [--dry-run]
   termhub capture --session <id|handle> [--app <app>] [--lines <n>]
   termhub focus --session <id|handle> [--app <app>] [--dry-run]
@@ -961,15 +970,16 @@ Hint:
     send: `termhub send
 
 Usage:
-  termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter] [--dry-run]
+  termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--enter | --no-enter] [--dry-run]
 
 Description:
   Send text to one resolved session target.
   Usually call resolve first, then pass the exact handle or sessionId.
   --text sends one string argument.
   --stdin reads the full stdin stream and sends it as one payload.
+  --enter appends enter after send. This is the default, but AI callers should pass it explicitly when submit-on-send is intended.
   Check supportedApps[].capabilities.sendWithoutEnter in termhub spec before using --no-enter.
-  For interactive TUIs, pair --no-enter with a later press --key enter call.
+  --no-enter stages the payload without submit. For interactive TUIs, pair --no-enter with a later press --key enter call.
   --dry-run resolves the target and prints the planned send without writing to the terminal.
 
 Output:
@@ -977,6 +987,7 @@ Output:
     ok, action, dryRun, plan, newline, bytes, target, text
 
 Examples:
+  termhub send --session <id|handle> --text 'npm test' --enter
   ${examples.send}
   termhub send --session <id|handle> --text 'echo hello' --dry-run
   termhub send --session <id|handle> --text 'echo hello'

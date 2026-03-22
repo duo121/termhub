@@ -116,7 +116,7 @@ AI workflow:
 
 ```bash
 termhub resolve --app windows-terminal --title API
-termhub send --app windows-terminal --session windows-terminal:session:<window-handle>:<tab-index> --text "npm test"
+termhub send --app windows-terminal --session windows-terminal:session:<window-handle>:<tab-index> --text "npm test" --enter
 ```
 
 ## How The AI Should Use termhub
@@ -137,9 +137,12 @@ Rules the AI should follow:
 - `open` should prefer a backend whose capabilities advertise `openWindow` / `openTab`.
 - If `--app` is omitted for `open`, termhub prefers the frontmost supported backend that supports the requested scope.
 - `--session` accepts either a session id or a namespaced handle.
+- On `send`, the AI should prefer passing `--enter` or `--no-enter` explicitly instead of relying on the default.
+- Use `--enter` for normal shell commands that should execute immediately.
+- Use `--no-enter` only when the payload should remain staged for a later real key press such as `press --key enter`.
 - `--title-contains` and `--name-contains` are safer when the user gives an approximate label instead of an exact title.
 - When multiple terminal backends are running, the AI should add `--app` for deterministic targeting.
 - Use `--dry-run` before `open`, `send`, `focus`, or `close` when the user wants confirmation or when the action is high-risk.
-- Apple Terminal rejects `--no-enter`.
+- Apple Terminal supports `--no-enter`, but the AI should only use it when it intends to submit separately.
 - Windows Terminal and CMD use PowerShell/UI Automation for focus, send, capture, and close.
 - Windows capture is best-effort and depends on visible text being readable through UI Automation.

@@ -63,6 +63,16 @@ test("spec command returns machine-readable command contract", () => {
     payload.commands.send.options.some((option) => option.name === "--dry-run"),
     true,
   );
+  assert.equal(
+    payload.commands.send.options.some((option) => option.name === "--enter"),
+    true,
+  );
+  assert.equal(
+    payload.commands.send.rules.includes(
+      "AI callers should prefer passing --enter or --no-enter explicitly.",
+    ),
+    true,
+  );
   assert.equal(payload.commands.press.usage, "termhub press --session <id|handle> --key <key> [--app <app>] [--dry-run]");
   assert.equal(payload.commands.press.rules.includes("--key is required."), true);
   assert.equal(
@@ -96,6 +106,15 @@ test("press help explains real keypress workflow", () => {
   assert.match(help, /Press a real key on one resolved target after focusing its owning window and tab\./);
   assert.match(help, /interactive TUIs/);
   assert.match(help, /--key enter --dry-run/);
+});
+
+test("send help explains explicit enter and staged send modes", () => {
+  const help = runCli(["send", "--help"]);
+
+  assert.match(help, /\[--enter \| --no-enter\]/);
+  assert.match(help, /--enter appends enter after send/);
+  assert.match(help, /--no-enter stages the payload without submit/);
+  assert.match(help, /--text 'npm test' --enter/);
 });
 
 test("version flag prints the package version as plain text", () => {
