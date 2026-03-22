@@ -10,12 +10,16 @@ function runCli(args) {
   });
 }
 
-test("root help advertises AI workflow, close, and spec", () => {
+test("root help advertises AI workflow, open, close, and spec", () => {
   const help = runCli(["--help"]);
 
   assert.match(help, /Recommended AI workflow:/);
   assert.match(help, /macOS and Windows/);
   assert.match(help, /termhub --version \| -v \| -V/);
+  assert.match(help, /termhub open \[--app <app>\] \[--window \| --tab\] \[--dry-run\] \[--compact\]/);
+  assert.match(help, /open\s+Open a new terminal window or tab in one backend\./);
+  assert.match(help, /termhub press --session <id\|handle> --key <key> \[--app <app>\] \[--dry-run\]/);
+  assert.match(help, /press\s+Press a real key on one resolved target after focusing it\./);
   assert.match(help, /--title-contains <txt>/);
   assert.match(help, /--dry-run/);
   assert.match(help, /termhub close --session <id\|handle> \[--app <app>\]/);
@@ -32,6 +36,25 @@ test("spec command returns machine-readable command contract", () => {
   assert.equal(payload.platform, process.platform);
   assert.equal(payload.supportedPlatforms.includes("win32"), true);
   assert.equal(payload.supportedApps[0].capabilities.send, true);
+  assert.equal(payload.supportedApps[0].capabilities.press, true);
+  assert.equal(payload.supportedApps[0].capabilities.pressKeys.includes("enter"), true);
+  assert.equal(payload.supportedApps[0].capabilities.dryRun.includes("press"), true);
+  assert.equal(typeof payload.supportedApps[0].capabilities.openWindow, "boolean");
+  assert.equal(typeof payload.supportedApps[0].capabilities.openTab, "boolean");
+  assert.equal(
+    payload.recommendedWorkflow.includes(
+      "Use open when the user asks the AI to create a new terminal window or tab.",
+    ),
+    true,
+  );
+  assert.equal(
+    payload.commands.open.usage,
+    "termhub open [--app <app>] [--window | --tab] [--dry-run] [--compact]",
+  );
+  assert.equal(
+    payload.commands.open.options.some((option) => option.name === "--tab"),
+    true,
+  );
   assert.equal(
     payload.commands.resolve.options.some((option) => option.name === "--title-contains"),
     true,
@@ -40,6 +63,8 @@ test("spec command returns machine-readable command contract", () => {
     payload.commands.send.options.some((option) => option.name === "--dry-run"),
     true,
   );
+  assert.equal(payload.commands.press.usage, "termhub press --session <id|handle> --key <key> [--app <app>] [--dry-run]");
+  assert.equal(payload.commands.press.rules.includes("--key is required."), true);
   assert.equal(
     payload.commands.close.usage,
     "termhub close --session <id|handle> [--app <app>] [--dry-run]",
@@ -53,6 +78,24 @@ test("close help explains terminal-specific behavior", () => {
 
   assert.match(help, /Terminal closes the selected tab with the app's standard close shortcut/);
   assert.match(help, /Busy Terminal tabs may still trigger the app's own confirmation dialog/);
+});
+
+test("open help explains scope selection and dry-run", () => {
+  const help = runCli(["open", "--help"]);
+
+  assert.match(help, /termhub open \[--app <app>\] \[--window \| --tab\] \[--dry-run\] \[--compact\]/);
+  assert.match(help, /Open a new terminal window or tab in one backend\./);
+  assert.match(help, /--window is the default if neither --window nor --tab is passed\./);
+  assert.match(help, /--dry-run resolves the backend and scope and prints the planned open without executing it\./);
+});
+
+test("press help explains real keypress workflow", () => {
+  const help = runCli(["press", "--help"]);
+
+  assert.match(help, /termhub press --session <id\|handle> --key <key> \[--app <app>\] \[--dry-run\]/);
+  assert.match(help, /Press a real key on one resolved target after focusing its owning window and tab\./);
+  assert.match(help, /interactive TUIs/);
+  assert.match(help, /--key enter --dry-run/);
 });
 
 test("version flag prints the package version as plain text", () => {

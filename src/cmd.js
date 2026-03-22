@@ -1,3 +1,4 @@
+import { CLIError } from "./errors.js";
 import { createProviderSnapshot } from "./snapshot.js";
 import {
   buildPowerShellJsonCommand,
@@ -18,8 +19,12 @@ export const PROVIDER = Object.freeze({
   capabilities: Object.freeze({
     list: true,
     resolve: true,
+    openWindow: false,
+    openTab: false,
     send: true,
     sendWithoutEnter: true,
+    press: true,
+    pressKeys: ["enter", "return"],
     capture: true,
     captureMode: "best-effort-visible-text",
     focus: true,
@@ -28,7 +33,7 @@ export const PROVIDER = Object.freeze({
     tty: false,
     titleMatch: ["exact", "contains"],
     nameMatch: ["exact", "contains"],
-    dryRun: ["send", "focus", "close"],
+    dryRun: ["send", "press", "focus", "close"],
   }),
 });
 
@@ -263,6 +268,51 @@ $payload | ConvertTo-Json -Depth 6 -Compress
     ok: true,
     sessionId: target.sessionId,
     windowId: target.windowId,
+  };
+}
+
+export async function pressKeyOnTarget(target, key) {
+  const requestedKey = String(key).toLowerCase();
+  const normalizedKey = requestedKey === "return" ? "enter" : requestedKey;
+  if (normalizedKey !== "enter") {
+    throw new CLIError("Unsupported key for Command Prompt", {
+      code: "UNSUPPORTED_OPTION",
+      exitCode: 2,
+      details: {
+        app: PROVIDER.app,
+        action: "press",
+        supportedKeys: PROVIDER.capabilities.pressKeys,
+      },
+    });
+  }
+
+  await runCmdJson(
+    `
+$windowHandle = ${target.windowId}
+
+if (-not (Set-TermhubForeground $windowHandle)) {
+  throw "Session not found"
+}
+
+Send-TermhubKeys '~'
+
+$payload = [pscustomobject]@{
+  ok = $true
+  windowId = $windowHandle
+}
+
+$payload | ConvertTo-Json -Depth 6 -Compress
+  `,
+    { sendKeys: true },
+  );
+
+  return {
+    ok: true,
+    sessionId: target.sessionId,
+    windowId: target.windowId,
+    tabIndex: target.tabIndex,
+    key: normalizedKey,
+    method: "sendkeys",
   };
 }
 

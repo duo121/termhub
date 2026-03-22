@@ -31,13 +31,31 @@ The user does not need to learn the CLI.
 
 Typical requests:
 
+- "Use termhub to open a fresh iTerm2 window for me."
 - "Use termhub to show me every iTerm2 tab I have open."
 - "Use termhub to close the tab named Task1."
 - "Use termhub to read the last 50 lines from my current Terminal tab."
 - "Use termhub to run `npm test` in the Windows Terminal tab called API."
-- "Use termhub to bring the CMD window named deploy to the front."
 
-## Scenario 1: Show Everything That Is Open
+## Scenario 1: Open A New Terminal For Me
+
+User asks the AI:
+
+> Use termhub to open a fresh iTerm2 window for me.
+
+AI workflow:
+
+```bash
+termhub open --app iterm2 --window
+```
+
+The AI gets JSON with:
+
+- the resolved `target`
+- the backend `result`
+- a reusable `handle` / `sessionId` for the new terminal
+
+## Scenario 2: Show Everything That Is Open
 
 User asks the AI:
 
@@ -58,7 +76,7 @@ The AI gets JSON with:
 - tab titles
 - TTYs when the backend exposes them
 
-## Scenario 2: Close One Specific Tab
+## Scenario 3: Close One Specific Tab
 
 User asks the AI:
 
@@ -75,7 +93,7 @@ The AI should not guess.
 
 If `resolve` returns `count: 0` or `count > 1`, the AI should refine the selector or ask a follow-up question.
 
-## Scenario 3: Read The Current Tab
+## Scenario 4: Read The Current Tab
 
 User asks the AI:
 
@@ -88,7 +106,7 @@ termhub resolve --app terminal --current-window --current-tab --current-session
 termhub capture --app terminal --session terminal:session:<window-id>:<tab-index> --lines 50
 ```
 
-## Scenario 4: Send A Command Into Windows Terminal
+## Scenario 5: Send A Command Into Windows Terminal
 
 User asks the AI:
 
@@ -101,37 +119,27 @@ termhub resolve --app windows-terminal --title API
 termhub send --app windows-terminal --session windows-terminal:session:<window-handle>:<tab-index> --text "npm test"
 ```
 
-## Scenario 5: Focus A CMD Window
-
-User asks the AI:
-
-> Use termhub to bring the CMD window named deploy to the front.
-
-AI workflow:
-
-```bash
-termhub resolve --app cmd --title deploy
-termhub focus --app cmd --session cmd:session:<pid>
-```
-
 ## How The AI Should Use termhub
 
 The standard pattern is:
 
-1. Use `list` when the user asks what is open.
-2. Use `resolve` when the user describes a target by title, TTY, current tab, window id, or handle.
-3. Use `send`, `capture`, `focus`, or `close` only after the target is exact.
-4. Use `doctor` when platform, permissions, or automation state are unclear.
+1. Use `open` when the user asks the AI to create a new terminal window or tab.
+2. Use `list` when the user asks what is open.
+3. Use `resolve` when the user describes a target by title, TTY, current tab, window id, or handle.
+4. Use `send`, `capture`, `focus`, or `close` only after the target is exact.
+5. Use `doctor` when platform, permissions, or automation state are unclear.
 
 Rules the AI should follow:
 
 - `termhub spec` is the machine-readable source of truth.
 - `termhub --help` and `termhub <command> --help` are the human-readable source of truth.
 - All command results are printed as JSON to `stdout`.
+- `open` should prefer a backend whose capabilities advertise `openWindow` / `openTab`.
+- If `--app` is omitted for `open`, termhub prefers the frontmost supported backend that supports the requested scope.
 - `--session` accepts either a session id or a namespaced handle.
 - `--title-contains` and `--name-contains` are safer when the user gives an approximate label instead of an exact title.
 - When multiple terminal backends are running, the AI should add `--app` for deterministic targeting.
-- Use `--dry-run` before `send`, `focus`, or `close` when the user wants confirmation or when the action is high-risk.
+- Use `--dry-run` before `open`, `send`, `focus`, or `close` when the user wants confirmation or when the action is high-risk.
 - Apple Terminal rejects `--no-enter`.
 - Windows Terminal and CMD use PowerShell/UI Automation for focus, send, capture, and close.
 - Windows capture is best-effort and depends on visible text being readable through UI Automation.

@@ -12,8 +12,12 @@ export const PROVIDER = Object.freeze({
   capabilities: Object.freeze({
     list: true,
     resolve: true,
+    openWindow: true,
+    openTab: true,
     send: true,
     sendWithoutEnter: true,
+    press: true,
+    pressKeys: ["enter", "return"],
     capture: true,
     captureMode: "native",
     focus: true,
@@ -22,7 +26,7 @@ export const PROVIDER = Object.freeze({
     tty: true,
     titleMatch: ["exact", "contains"],
     nameMatch: ["exact", "contains"],
-    dryRun: ["send", "focus", "close"],
+    dryRun: ["open", "send", "press", "focus", "close"],
   }),
 });
 
@@ -196,6 +200,46 @@ on run argv
 end run
 `;
 
+const PRESS_SCRIPT = `
+on run argv
+  if (count of argv) is not 4 then
+    error "expected window id, tab index, session index, and key" number 1002
+  end if
+
+  set targetWindowId to item 1 of argv
+  set targetTabIndex to item 2 of argv as integer
+  set targetSessionIndex to item 3 of argv as integer
+  set targetKey to item 4 of argv
+
+  if application id "${PROVIDER.bundleId}" is not running then
+    error "iTerm2 is not running" number 1001
+  end if
+
+  tell application id "${PROVIDER.bundleId}"
+    tell window id targetWindowId to select
+    tell tab targetTabIndex of window id targetWindowId to select
+    tell session targetSessionIndex of tab targetTabIndex of window id targetWindowId to select
+    activate
+  end tell
+
+  delay 0.05
+
+  tell application "System Events"
+    if targetKey is "enter" then
+      key code 76
+      return "ok"
+    end if
+
+    if targetKey is "return" then
+      key code 36
+      return "ok"
+    end if
+  end tell
+
+  error "unsupported key" number 1004
+end run
+`;
+
 const CLOSE_SCRIPT = `
 on run argv
   if (count of argv) is not 2 then
@@ -212,6 +256,45 @@ on run argv
   tell application id "${PROVIDER.bundleId}"
     close (tab targetTabIndex of window id targetWindowId)
     return "ok"
+  end tell
+end run
+`;
+
+const OPEN_SCRIPT = `
+on run argv
+  if (count of argv) is not 1 then
+    error "expected open mode" number 1002
+  end if
+
+  set openMode to item 1 of argv
+  set createdScope to "window"
+  set targetTabIndex to 1
+
+  tell application id "${PROVIDER.bundleId}"
+    if openMode is "tab" and (count of windows) is greater than 0 then
+      set targetWindow to current window
+      tell targetWindow
+        set newTab to (create tab with default profile)
+      end tell
+      set createdScope to "tab"
+      set targetWindowId to id of targetWindow
+      set targetSessionId to id of current session of newTab
+    else
+      set newWindow to (create window with default profile)
+      set targetWindowId to id of newWindow
+      set targetSessionId to id of current session of current tab of newWindow
+    end if
+
+    activate
+
+    repeat with ti from 1 to count of tabs of window id targetWindowId
+      if (id of current session of tab ti of window id targetWindowId) is targetSessionId then
+        set targetTabIndex to ti
+        exit repeat
+      end if
+    end repeat
+
+    return createdScope & character id 31 & (targetWindowId as text) & character id 31 & (targetTabIndex as text) & character id 31 & targetSessionId
   end tell
 end run
 `;
@@ -283,6 +366,26 @@ function mapAppleScriptError(message) {
       code: "AUTOMATION_DENIED",
       exitCode: 5,
       details: message,
+    });
+  }
+
+  if (message.includes("assistive access") || message.includes("(-1719)")) {
+    return new CLIError("Accessibility permission is required to press keys in iTerm2", {
+      code: "ACCESSIBILITY_DENIED",
+      exitCode: 5,
+      details: message,
+    });
+  }
+
+  if (message.includes("unsupported key")) {
+    return new CLIError("Unsupported key for iTerm2", {
+      code: "UNSUPPORTED_OPTION",
+      exitCode: 2,
+      details: {
+        app: PROVIDER.app,
+        action: "press",
+        supportedKeys: PROVIDER.capabilities.pressKeys,
+      },
     });
   }
 
@@ -427,6 +530,25 @@ export async function focusTarget(target) {
   };
 }
 
+export async function pressKeyOnTarget(target, key) {
+  await runAppleScript(PRESS_SCRIPT, [
+    String(target.windowId),
+    String(target.tabIndex),
+    String(target.sessionIndex),
+    String(key).toLowerCase(),
+  ]);
+
+  return {
+    ok: true,
+    sessionId: target.sessionId,
+    windowId: target.windowId,
+    tabIndex: target.tabIndex,
+    sessionIndex: target.sessionIndex,
+    key: String(key).toLowerCase(),
+    method: "system-events-key-code",
+  };
+}
+
 export async function closeTarget(target) {
   await runAppleScript(CLOSE_SCRIPT, [String(target.windowId), String(target.tabIndex)]);
 
@@ -437,5 +559,20 @@ export async function closeTarget(target) {
     tabIndex: target.tabIndex,
     scope: "tab",
     method: "native",
+  };
+}
+
+export async function openTarget({ scope = "window" } = {}) {
+  const requestedScope = scope === "tab" ? "tab" : "window";
+  const raw = await runAppleScript(OPEN_SCRIPT, [requestedScope]);
+  const [createdScope, windowId, tabIndex, sessionId] = raw.split(FIELD_SEPARATOR);
+
+  return {
+    ok: true,
+    requestedScope,
+    createdScope,
+    windowId: Number(windowId),
+    tabIndex: Number(tabIndex),
+    sessionSpecifier: sessionId,
   };
 }

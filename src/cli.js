@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readFileSync } from "node:fs";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { CLIError, toErrorPayload } from "./errors.js";
 import {
@@ -10,8 +11,11 @@ import {
   captureTarget,
   closeTarget,
   focusTarget,
+  getFrontmostApp,
   getSnapshot,
   normalizeAppOption,
+  openTarget,
+  pressKeyOnTarget,
   sendTextToTarget,
 } from "./apps.js";
 import { filterSessions, resolveSingleSession } from "./snapshot.js";
@@ -46,6 +50,23 @@ function hasSupportedApp(app) {
   return SUPPORTED_APP_VALUES.includes(app);
 }
 
+function getAppMetadata(app) {
+  return SUPPORTED_APPS.find((entry) => entry.app === app) ?? null;
+}
+
+function canAppOpenScope(app, scope) {
+  const appInfo = getAppMetadata(app);
+  if (!appInfo) {
+    return false;
+  }
+
+  if (scope === "tab") {
+    return appInfo.capabilities?.openTab === true;
+  }
+
+  return appInfo.capabilities?.openWindow === true;
+}
+
 function buildSupportedAppsSpec() {
   return SUPPORTED_APPS.map((app) => ({
     app: app.app,
@@ -61,12 +82,29 @@ function buildSupportedAppsSpec() {
 function buildSendRules() {
   const rules = ["Exactly one of --text or --stdin is required."];
 
-  if (hasSupportedApp("terminal")) {
+  if (getAppMetadata("terminal")?.capabilities?.sendWithoutEnter === false) {
     rules.push("Terminal rejects --no-enter.");
   }
 
   if (hasSupportedApp("windows-terminal") || hasSupportedApp("cmd")) {
     rules.push("Windows backends send input by focusing the target and using keyboard automation.");
+  }
+
+  return rules;
+}
+
+function buildPressRules() {
+  const rules = ["--key is required."];
+  const supportedKeys = [
+    ...new Set(
+      SUPPORTED_APPS.flatMap((app) =>
+        Array.isArray(app.capabilities?.pressKeys) ? app.capabilities.pressKeys : [],
+      ),
+    ),
+  ];
+
+  if (supportedKeys.length > 0) {
+    rules.push(`Currently supported key values on this platform: ${supportedKeys.join(", ")}.`);
   }
 
   return rules;
@@ -106,6 +144,41 @@ function buildCaptureNotes() {
   return notes;
 }
 
+function buildOpenNotes() {
+  const notes = [];
+
+  if (SUPPORTED_APPS.some((app) => app.capabilities?.openWindow || app.capabilities?.openTab)) {
+    notes.push("If --tab is requested but the backend has no open windows yet, the backend may create a new window instead.");
+  }
+
+  if (hasSupportedApp("windows-terminal") || hasSupportedApp("cmd")) {
+    notes.push("Current Windows backends do not yet advertise open support; check supportedApps[].capabilities before calling open.");
+  }
+
+  return notes;
+}
+
+function buildPressNotes() {
+  const notes = [];
+
+  if (SUPPORTED_APPS.some((app) => app.capabilities?.sendWithoutEnter && app.capabilities?.press)) {
+    notes.push(
+      "For interactive TUIs such as Codex, send the prompt with --no-enter first, then call press --key enter.",
+    );
+  }
+
+  if (hasSupportedApp("terminal") || hasSupportedApp("iterm2")) {
+    notes.push("macOS key presses use System Events and may require Accessibility permission.");
+    notes.push("On macOS, enter and return are distinct keys. Use enter for Codex submit and return for a literal newline.");
+  }
+
+  if (hasSupportedApp("windows-terminal") || hasSupportedApp("cmd")) {
+    notes.push("Windows key presses use PowerShell SendKeys after focusing the resolved target.");
+  }
+
+  return notes;
+}
+
 function buildCliSpec() {
   return {
     ok: true,
@@ -117,14 +190,16 @@ function buildCliSpec() {
       version: PACKAGE_VERSION,
     },
     purpose:
-      "AI-native terminal control CLI for macOS and Windows. It discovers, resolves, focuses, captures, sends to, and closes terminal windows and tabs through AppleScript or PowerShell/UI Automation depending on the backend.",
+      "AI-native terminal control CLI for macOS and Windows. It discovers, resolves, opens, focuses, presses keys in, captures, sends to, and closes terminal windows and tabs through AppleScript or PowerShell/UI Automation depending on the backend.",
     platform: CURRENT_PLATFORM,
     supportedPlatforms: SUPPORTED_PLATFORMS,
     supportedApps: buildSupportedAppsSpec(),
     recommendedWorkflow: [
+      "Use open when the user asks the AI to create a new terminal window or tab.",
       "Use list when the user asks what is open right now.",
       "Use resolve when the user identifies a target by title, tty, current tab, window id, or handle.",
       "Only call send, capture, focus, or close after you have exactly one target.",
+      "For interactive TUIs, send text with --no-enter when supported, then call press --key enter.",
       "If resolve returns count 0 or count greater than 1, refine selectors instead of guessing.",
       "Use doctor when app availability, automation permission, or frontmost state are unclear.",
       "Use spec or command --help when the AI needs exact flag names or JSON output fields.",
@@ -133,7 +208,7 @@ function buildCliSpec() {
       transport: "stdout JSON",
       selectors: "All resolve selectors are ANDed together.",
       capabilities:
-        "Each supported app advertises a capabilities object so the AI can determine whether send, sendWithoutEnter, capture, focus, close, tty selectors, contains matching, and dry-run planning are supported before calling a mutating command.",
+        "Each supported app advertises a capabilities object so the AI can determine whether send, sendWithoutEnter, press, pressKeys, capture, focus, close, tty selectors, contains matching, and dry-run planning are supported before calling a mutating command.",
       sessionSpecifier:
         "--session accepts either a backend session id or a namespaced handle such as iterm2:session:<uuid>, terminal:session:<windowId>:<tabIndex>, windows-terminal:session:<windowHandle>:<tabIndex>, or cmd:session:<pid>.",
       errors: {
@@ -146,6 +221,49 @@ function buildCliSpec() {
       },
     },
     commands: {
+      open: {
+        usage: "termhub open [--app <app>] [--window | --tab] [--dry-run] [--compact]",
+        purpose: "Open a new terminal window or tab in one backend.",
+        options: [
+          {
+            name: "--app",
+            type: "string",
+            required: false,
+            values: SUPPORTED_APP_VALUES,
+            description:
+              "Choose one backend explicitly. If omitted, termhub prefers the frontmost supported backend that supports the requested scope and otherwise falls back to the first supported backend on this platform that supports it.",
+          },
+          {
+            name: "--window",
+            type: "boolean",
+            required: false,
+            description: "Open a new window. This is the default if neither --window nor --tab is passed.",
+          },
+          {
+            name: "--tab",
+            type: "boolean",
+            required: false,
+            description: "Open a new tab in the chosen backend. Some backends may fall back to a window.",
+          },
+          {
+            name: "--dry-run",
+            type: "boolean",
+            required: false,
+            description: "Plan the open action and show which backend and scope would be used without executing it.",
+          },
+          {
+            name: "--compact",
+            type: "boolean",
+            required: false,
+            description: "Print JSON without indentation.",
+          },
+        ],
+        notes: buildOpenNotes(),
+        output: {
+          topLevelFields: ["ok", "action", "dryRun", "plan", "target", "result"],
+          targetFields: MATCH_FIELDS,
+        },
+      },
       list: {
         usage: "termhub list [--app <app>] [--compact]",
         purpose:
@@ -294,7 +412,7 @@ function buildCliSpec() {
             type: "boolean",
             required: false,
             description:
-              "Do not append enter. Apple Terminal rejects this option; iTerm2 and Windows backends accept it.",
+              "Do not append enter. Check supportedApps[].capabilities.sendWithoutEnter before using it.",
           },
           {
             name: "--dry-run",
@@ -312,6 +430,50 @@ function buildCliSpec() {
         rules: buildSendRules(),
         output: {
           topLevelFields: ["ok", "action", "dryRun", "plan", "newline", "bytes", "target", "text"],
+          targetFields: MATCH_FIELDS,
+        },
+      },
+      press: {
+        usage: "termhub press --session <id|handle> --key <key> [--app <app>] [--dry-run]",
+        purpose: "Press a real key on one resolved target after focusing it.",
+        options: [
+          {
+            name: "--session",
+            type: "string",
+            required: true,
+            description: "Target session id or namespaced handle.",
+          },
+          {
+            name: "--key",
+            type: "string",
+            required: true,
+            description:
+              "Key name to press. Check supportedApps[].capabilities.pressKeys or this command's rules before calling.",
+          },
+          {
+            name: "--app",
+            type: "string",
+            required: false,
+            values: SUPPORTED_APP_VALUES,
+            description: "Restrict target lookup to one backend.",
+          },
+          {
+            name: "--dry-run",
+            type: "boolean",
+            required: false,
+            description: "Resolve the target and print the planned key press without executing it.",
+          },
+          {
+            name: "--compact",
+            type: "boolean",
+            required: false,
+            description: "Print JSON without indentation.",
+          },
+        ],
+        rules: buildPressRules(),
+        notes: buildPressNotes(),
+        output: {
+          topLevelFields: ["ok", "action", "dryRun", "plan", "key", "target", "result"],
           targetFields: MATCH_FIELDS,
         },
       },
@@ -524,15 +686,24 @@ function buildRootBackendNotes() {
     notes.push("When multiple backends are running, add --app for precise current-* queries.");
   }
 
+  notes.push("open is only available on backends whose capabilities advertise openWindow or openTab.");
   notes.push("close targets the owning tab or window of the resolved session.");
-  notes.push("Use --dry-run with send, focus, or close when the AI should preview the exact target and action before execution.");
+  notes.push("Use --dry-run with open, send, press, focus, or close when the AI should preview the exact target and action before execution.");
 
   if (hasSupportedApp("iterm2")) {
     notes.push("iTerm2 supports send with or without enter.");
   }
 
   if (hasSupportedApp("terminal")) {
-    notes.push("Terminal supports send with enter only; --no-enter is rejected.");
+    if (getAppMetadata("terminal")?.capabilities?.sendWithoutEnter === true) {
+      notes.push("Terminal supports send without enter through keyboard automation after focusing the target tab.");
+    } else {
+      notes.push("Terminal supports send with enter only; --no-enter is rejected.");
+    }
+  }
+
+  if (SUPPORTED_APPS.some((app) => app.capabilities?.press === true)) {
+    notes.push("press sends a real key event. Use it for interactive TUIs that need an actual Enter key press.");
   }
 
   if (hasSupportedApp("windows-terminal")) {
@@ -547,11 +718,16 @@ function buildRootBackendNotes() {
 }
 
 function buildExamples() {
+  const openApp =
+    SUPPORTED_APPS.find((appInfo) => appInfo.capabilities?.openWindow === true)?.app ?? "<app>";
+
   if (hasSupportedApp("windows-terminal")) {
     return {
       listApp: "windows-terminal",
+      open: `termhub open --app ${openApp} --window --dry-run`,
       resolve: "termhub resolve --app windows-terminal --title Task1",
       send: "termhub send --session windows-terminal:session:<windowHandle>:1 --text 'npm test' --no-enter",
+      press: "termhub press --session windows-terminal:session:<windowHandle>:1 --key enter",
       capture: "termhub capture --session windows-terminal:session:<windowHandle>:1 --lines 30",
       focus: "termhub focus --session windows-terminal:session:<windowHandle>:1",
       close: "termhub close --session windows-terminal:session:<windowHandle>:1",
@@ -563,12 +739,16 @@ function buildExamples() {
 
   return {
     listApp: hasSupportedApp("terminal") ? "terminal" : SUPPORTED_APP_VALUES[0] ?? "<app>",
+    open: `termhub open --app ${openApp} --window`,
     resolve: hasSupportedApp("iterm2")
       ? "termhub resolve --app iterm2 --title Task1"
       : "termhub resolve --title Task1",
     send: hasSupportedApp("iterm2")
-      ? "termhub send --session iterm2:session:<uuid> --text 'npm test'"
+      ? "termhub send --session iterm2:session:<uuid> --text 'npm test' --no-enter"
       : "termhub send --session <id|handle> --text 'npm test'",
+    press: hasSupportedApp("iterm2")
+      ? "termhub press --session iterm2:session:<uuid> --key enter"
+      : "termhub press --session <id|handle> --key enter",
     capture: hasSupportedApp("terminal")
       ? "termhub capture --session terminal:session:545305:1 --lines 30"
       : "termhub capture --session iterm2:session:<uuid> --lines 30",
@@ -590,23 +770,28 @@ function buildRootHelp() {
   return `termhub (alias: thub)
 
 AI-native terminal control CLI for macOS and Windows.
-Use it when an AI needs to inspect, resolve, focus, capture, send to, or close terminal tabs.
+Use it when an AI needs to inspect, resolve, open, focus, press keys in, capture, send to, or close terminal tabs.
 
 Current platform:
   ${CURRENT_PLATFORM}
 
 Recommended AI workflow:
-  1. termhub list
-  2. termhub resolve ...
-  3. termhub send | capture | focus | close ...
-  4. termhub doctor when app state or permissions are unclear
-  5. termhub spec for the machine-readable command and JSON contract
+  1. termhub open ... when the user asks for a new terminal window or tab
+  2. termhub list
+  3. termhub resolve ...
+  4. termhub send ...
+  5. termhub press --key enter ... when the target expects a real key press
+  6. termhub capture | focus | close ...
+  7. termhub doctor when app state or permissions are unclear
+  8. termhub spec for the machine-readable command and JSON contract
 
 Usage:
   termhub --version | -v | -V
+  termhub open [--app <app>] [--window | --tab] [--dry-run] [--compact]
   termhub list [--app <app>] [--compact]
   termhub resolve [selectors] [--compact]
   termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter] [--dry-run]
+  termhub press --session <id|handle> --key <key> [--app <app>] [--dry-run]
   termhub capture --session <id|handle> [--app <app>] [--lines <n>]
   termhub focus --session <id|handle> [--app <app>] [--dry-run]
   termhub close --session <id|handle> [--app <app>] [--dry-run]
@@ -615,9 +800,11 @@ Usage:
   termhub <command> --help
 
 Command roles:
+  open     Open a new terminal window or tab in one backend.
   list     Discover open apps, windows, tabs, sessions, titles, TTYs, and handles.
   resolve  Narrow a user-described target to exact session matches.
   send     Send text or stdin into one resolved target.
+  press    Press a real key on one resolved target after focusing it.
   capture  Read the current visible contents from one resolved target.
   focus    Bring the owning window and tab to the front.
   close    Close the owning tab or window for one resolved target.
@@ -660,10 +847,12 @@ Examples:
   termhub --version
   termhub -V
   termhub spec
+  ${examples.open}
   termhub list
   termhub list --app ${examples.listApp}
   ${examples.resolve}
   ${examples.send}
+  ${examples.press}
   ${examples.stdin}
   ${examples.capture}
   ${examples.focus}
@@ -678,8 +867,33 @@ function buildCommandHelp() {
   const examples = buildExamples();
   const captureNotes = buildCaptureNotes();
   const closeNotes = buildCloseNotes();
+  const tabOpenApp =
+    SUPPORTED_APPS.find((appInfo) => appInfo.capabilities?.openTab === true)?.app ?? "<app>";
+  const windowOpenApp =
+    SUPPORTED_APPS.find((appInfo) => appInfo.capabilities?.openWindow === true)?.app ?? "<app>";
 
   return {
+    open: `termhub open
+
+Usage:
+  termhub open [--app <app>] [--window | --tab] [--dry-run] [--compact]
+
+Description:
+  Open a new terminal window or tab in one backend.
+  If --app is omitted, termhub prefers the frontmost supported backend that supports the requested scope and otherwise falls back to the first supported backend on this platform that supports it.
+  --window is the default if neither --window nor --tab is passed.
+  --dry-run resolves the backend and scope and prints the planned open without executing it.
+${buildOpenNotes().length > 0 ? `\nNotes:\n${formatBulletLines(buildOpenNotes())}` : ""}
+
+Output:
+  JSON object with:
+    ok, action, dryRun, plan, target, result
+
+Examples:
+  ${examples.open}
+  termhub open --app ${tabOpenApp} --tab
+  termhub open --app ${windowOpenApp} --window --dry-run
+`,
     list: `termhub list
 
 Usage:
@@ -754,7 +968,8 @@ Description:
   Usually call resolve first, then pass the exact handle or sessionId.
   --text sends one string argument.
   --stdin reads the full stdin stream and sends it as one payload.
-  Apple Terminal rejects --no-enter. Other current backends accept it.
+  Check supportedApps[].capabilities.sendWithoutEnter in termhub spec before using --no-enter.
+  For interactive TUIs, pair --no-enter with a later press --key enter call.
   --dry-run resolves the target and prints the planned send without writing to the terminal.
 
 Output:
@@ -766,6 +981,26 @@ Examples:
   termhub send --session <id|handle> --text 'echo hello' --dry-run
   termhub send --session <id|handle> --text 'echo hello'
   ${examples.stdin}
+`,
+    press: `termhub press
+
+Usage:
+  termhub press --session <id|handle> --key <key> [--app <app>] [--dry-run]
+
+Description:
+  Press a real key on one resolved target after focusing its owning window and tab.
+  Use this for interactive TUIs that require an actual key event instead of a literal newline character.
+  Check supportedApps[].capabilities.pressKeys in termhub spec before calling across platforms.
+  --dry-run resolves the target and prints the planned key press without changing the UI.
+${buildPressNotes().length > 0 ? `\nNotes:\n${formatBulletLines(buildPressNotes())}` : ""}
+
+Output:
+  JSON object with:
+    ok, action, dryRun, plan, key, target, result
+
+Examples:
+  ${examples.press}
+  termhub press --session <id|handle> --key enter --dry-run
 `,
     capture: `termhub capture
 
@@ -860,6 +1095,7 @@ Examples:
 
 const GLOBAL_OPTIONS = new Set(["help", "compact"]);
 const COMMAND_OPTIONS = {
+  open: new Set(["app", "window", "tab", "dryRun"]),
   list: new Set(["app"]),
   resolve: new Set([
     "app",
@@ -877,6 +1113,7 @@ const COMMAND_OPTIONS = {
     "currentSession",
   ]),
   send: new Set(["app", "session", "text", "stdin", "enter", "dryRun"]),
+  press: new Set(["app", "session", "key", "dryRun"]),
   focus: new Set(["app", "session", "dryRun"]),
   close: new Set(["app", "session", "dryRun"]),
   capture: new Set(["app", "session", "lines"]),
@@ -1078,13 +1315,20 @@ function requireSessionOption(options, commandName) {
   return options.session;
 }
 
+function requireKeyOption(options) {
+  if (typeof options.key !== "string" || options.key.trim() === "") {
+    throw new CLIError("press requires --key <key>", {
+      code: "USAGE_ERROR",
+      exitCode: 2,
+    });
+  }
+
+  return options.key.trim().toLowerCase();
+}
+
 async function findSessionOrThrow(sessionSpecifier, app) {
   const snapshot = await getSnapshot({ app });
   return resolveSingleSession(snapshot, sessionSpecifier);
-}
-
-function getAppMetadata(app) {
-  return SUPPORTED_APPS.find((entry) => entry.app === app) ?? null;
 }
 
 function buildDryRunPlan(action, target, extra = {}) {
@@ -1113,6 +1357,17 @@ function buildDryRunPlan(action, target, extra = {}) {
     };
   }
 
+  if (action === "press") {
+    return {
+      app: target.app,
+      automation: appInfo?.automation ?? null,
+      capability: "press",
+      pressKeys: capabilities?.pressKeys ?? [],
+      key: extra.key ?? null,
+      description: `Would focus the target and press the ${extra.key ?? "requested"} key.`,
+    };
+  }
+
   if (action === "close") {
     return {
       app: target.app,
@@ -1132,6 +1387,182 @@ function buildDryRunPlan(action, target, extra = {}) {
     automation: appInfo?.automation ?? null,
     description: "Would execute the planned action.",
   };
+}
+
+function resolveOpenScope(options) {
+  if (options.window === true && options.tab === true) {
+    throw new CLIError("open accepts only one of --window or --tab", {
+      code: "USAGE_ERROR",
+      exitCode: 2,
+    });
+  }
+
+  return options.tab === true ? "tab" : "window";
+}
+
+function assertOpenSupported(app, scope) {
+  const appInfo = getAppMetadata(app);
+  const supported = canAppOpenScope(app, scope);
+
+  if (supported) {
+    return appInfo;
+  }
+
+  throw new CLIError(`Open ${scope} is not supported for ${appInfo?.displayName ?? app}`, {
+    code: "UNSUPPORTED_ACTION",
+    exitCode: 2,
+    details: {
+      app,
+      action: "open",
+      requestedScope: scope,
+      capabilities: appInfo?.capabilities ?? null,
+    },
+  });
+}
+
+async function resolveOpenApp(options, scope) {
+  const requestedApp = normalizeAppOption(options.app);
+  if (requestedApp) {
+    return requestedApp;
+  }
+
+  const frontmostApp = normalizeAppOption((await getFrontmostApp())?.app);
+  if (frontmostApp && canAppOpenScope(frontmostApp, scope)) {
+    return frontmostApp;
+  }
+
+  const fallbackApp = SUPPORTED_APPS.find((appInfo) => canAppOpenScope(appInfo.app, scope))?.app;
+  if (fallbackApp) {
+    return fallbackApp;
+  }
+
+  return frontmostApp ?? SUPPORTED_APP_VALUES[0] ?? null;
+}
+
+function buildOpenPlan(app, scope) {
+  const appInfo = getAppMetadata(app);
+  const capabilities = appInfo?.capabilities ?? null;
+  const mayFallbackToWindow = scope === "tab";
+
+  return {
+    app,
+    automation: appInfo?.automation ?? null,
+    capability: scope === "tab" ? "openTab" : "openWindow",
+    requestedScope: scope,
+    mayFallbackToWindow,
+    description:
+      scope === "tab"
+        ? "Would request a new tab. The backend may create a new window instead if no window is available."
+        : "Would request a new terminal window.",
+    supports: {
+      openWindow: capabilities?.openWindow ?? false,
+      openTab: capabilities?.openTab ?? false,
+    },
+  };
+}
+
+function resolveOpenedTargetFromSnapshot(snapshot, app, result) {
+  if (result.sessionSpecifier) {
+    const matches = filterSessions(snapshot, {
+      app,
+      sessionId: result.sessionSpecifier,
+    });
+
+    if (matches.length === 1) {
+      return matches[0];
+    }
+  }
+
+  const fallbackMatches = filterSessions(snapshot, {
+    app,
+    windowId: result.windowId,
+    tabIndex: result.tabIndex,
+  });
+
+  if (fallbackMatches.length === 1) {
+    return fallbackMatches[0];
+  }
+
+  return null;
+}
+
+async function findOpenedTargetWithRetry(app, result) {
+  const attempts = 6;
+  const delayMs = 150;
+  let lastSnapshot = null;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const snapshot = await getSnapshot({ app });
+    lastSnapshot = snapshot;
+
+    const target = resolveOpenedTargetFromSnapshot(snapshot, app, result);
+    if (target) {
+      return target;
+    }
+
+    if (attempt < attempts - 1) {
+      await delay(delayMs);
+    }
+  }
+
+  throw new CLIError("Opened target could not be resolved from the latest snapshot", {
+    code: "OPEN_TARGET_NOT_FOUND",
+    exitCode: 5,
+    details: {
+      app,
+      requestedScope: result.requestedScope,
+      createdScope: result.createdScope,
+      windowId: result.windowId,
+      tabIndex: result.tabIndex,
+      sessionSpecifier: result.sessionSpecifier ?? null,
+      counts: lastSnapshot?.counts ?? null,
+    },
+  });
+}
+
+async function handleOpen(options) {
+  const scope = resolveOpenScope(options);
+  const app = await resolveOpenApp(options, scope);
+
+  if (!app) {
+    throw new CLIError(`No supported terminal backends are available on ${CURRENT_PLATFORM}`, {
+      code: "UNSUPPORTED_PLATFORM",
+      exitCode: 2,
+      details: {
+        platform: CURRENT_PLATFORM,
+        supportedApps: SUPPORTED_APPS.map((provider) => provider.app),
+      },
+    });
+  }
+
+  assertOpenSupported(app, scope);
+
+  if (options.dryRun === true) {
+    writeJson(
+      {
+        ok: true,
+        action: "open",
+        dryRun: true,
+        plan: buildOpenPlan(app, scope),
+      },
+      options,
+    );
+    return;
+  }
+
+  const result = await openTarget(app, { scope });
+  const target = await findOpenedTargetWithRetry(app, result);
+
+  writeJson(
+    {
+      ok: true,
+      action: "open",
+      dryRun: false,
+      target,
+      result,
+    },
+    options,
+  );
 }
 
 async function handleList(options) {
@@ -1211,6 +1642,42 @@ async function handleSend(options) {
       bytes: Buffer.byteLength(text, "utf8"),
       target,
       text,
+    },
+    options,
+  );
+}
+
+async function handlePress(options) {
+  const app = normalizeAppOption(options.app);
+  const sessionId = requireSessionOption(options, "press");
+  const key = requireKeyOption(options);
+  const target = await findSessionOrThrow(sessionId, app);
+
+  if (options.dryRun === true) {
+    writeJson(
+      {
+        ok: true,
+        action: "press",
+        dryRun: true,
+        plan: buildDryRunPlan("press", target, { key }),
+        key,
+        target,
+      },
+      options,
+    );
+    return;
+  }
+
+  const result = await pressKeyOnTarget(target, key);
+
+  writeJson(
+    {
+      ok: true,
+      action: "press",
+      dryRun: false,
+      key,
+      target,
+      result,
     },
     options,
   );
@@ -1380,6 +1847,9 @@ async function main() {
   assertKnownOptions(parsed.command, parsed.options, parsed.positionals);
 
   switch (parsed.command) {
+    case "open":
+      await handleOpen(parsed.options);
+      return;
     case "list":
       await handleList(parsed.options);
       return;
@@ -1388,6 +1858,9 @@ async function main() {
       return;
     case "send":
       await handleSend(parsed.options);
+      return;
+    case "press":
+      await handlePress(parsed.options);
       return;
     case "capture":
       await handleCapture(parsed.options);

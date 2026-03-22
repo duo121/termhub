@@ -12,8 +12,12 @@ export const PROVIDER = Object.freeze({
   capabilities: Object.freeze({
     list: true,
     resolve: true,
+    openWindow: true,
+    openTab: true,
     send: true,
-    sendWithoutEnter: false,
+    sendWithoutEnter: true,
+    press: true,
+    pressKeys: ["enter", "return"],
     capture: true,
     captureMode: "native",
     focus: true,
@@ -22,7 +26,7 @@ export const PROVIDER = Object.freeze({
     tty: true,
     titleMatch: ["exact", "contains"],
     nameMatch: ["exact", "contains"],
-    dryRun: ["send", "focus", "close"],
+    dryRun: ["open", "send", "press", "focus", "close"],
   }),
 });
 
@@ -164,6 +168,50 @@ on run argv
 end run
 `;
 
+const TYPE_SCRIPT = `
+on run argv
+  if (count of argv) is not 3 then
+    error "expected window id, tab index, and text" number 1002
+  end if
+
+  set targetWindowId to item 1 of argv
+  set targetTabIndex to item 2 of argv as integer
+  set inputText to item 3 of argv
+
+  if application id "${PROVIDER.bundleId}" is not running then
+    error "Terminal is not running" number 1001
+  end if
+
+  tell application id "${PROVIDER.bundleId}"
+    set selected of tab targetTabIndex of window id targetWindowId to true
+    activate
+  end tell
+
+  delay 0.05
+
+  set previousClipboard to missing value
+  try
+    set previousClipboard to the clipboard
+  end try
+
+  set the clipboard to inputText
+
+  tell application "System Events"
+    keystroke "v" using command down
+  end tell
+
+  delay 0.05
+
+  if previousClipboard is not missing value then
+    try
+      set the clipboard to previousClipboard
+    end try
+  end if
+
+  return "ok"
+end run
+`;
+
 const CAPTURE_SCRIPT = `
 on run argv
   if (count of argv) is not 2 then
@@ -197,11 +245,47 @@ on run argv
   end if
 
   tell application id "${PROVIDER.bundleId}"
-    tell window id targetWindowId to select
-    tell tab targetTabIndex of window id targetWindowId to select
+    set selected of tab targetTabIndex of window id targetWindowId to true
     activate
     return (id of front window as text)
   end tell
+end run
+`;
+
+const PRESS_SCRIPT = `
+on run argv
+  if (count of argv) is not 3 then
+    error "expected window id, tab index, and key" number 1002
+  end if
+
+  set targetWindowId to item 1 of argv
+  set targetTabIndex to item 2 of argv as integer
+  set targetKey to item 3 of argv
+
+  if application id "${PROVIDER.bundleId}" is not running then
+    error "Terminal is not running" number 1001
+  end if
+
+  tell application id "${PROVIDER.bundleId}"
+    set selected of tab targetTabIndex of window id targetWindowId to true
+    activate
+  end tell
+
+  delay 0.05
+
+  tell application "System Events"
+    if targetKey is "enter" then
+      key code 76
+      return "ok"
+    end if
+
+    if targetKey is "return" then
+      key code 36
+      return "ok"
+    end if
+  end tell
+
+  error "unsupported key" number 1004
 end run
 `;
 
@@ -219,10 +303,7 @@ on run argv
   end if
 
   tell application id "${PROVIDER.bundleId}"
-    tell window id targetWindowId
-      set selected of tab targetTabIndex to true
-      select
-    end tell
+    set selected of tab targetTabIndex of window id targetWindowId to true
     activate
   end tell
 
@@ -232,6 +313,88 @@ on run argv
 
   return "ok"
 end run
+`;
+
+const OPEN_WINDOW_SCRIPT = `
+tell application id "${PROVIDER.bundleId}"
+  activate
+end tell
+
+delay 0.1
+
+tell application "System Events"
+  tell process "Terminal"
+    click menu item 1 of menu 1 of menu item 1 of menu "Shell" of menu bar 1
+  end tell
+end tell
+
+delay 0.2
+
+tell application id "${PROVIDER.bundleId}"
+  set targetWindowId to id of front window
+  set targetTabIndex to 1
+
+  repeat with ti from 1 to number of tabs of front window
+    if selected of tab ti of front window then
+      set targetTabIndex to ti
+      exit repeat
+    end if
+  end repeat
+
+  set sessionId to ""
+  try
+    set sessionId to tty of tab targetTabIndex of front window
+  end try
+
+  if sessionId is "" then
+    set sessionId to ("window:" & (targetWindowId as text) & ":tab:" & (targetTabIndex as text))
+  end if
+
+  return (targetWindowId as text) & character id 31 & (targetTabIndex as text) & character id 31 & sessionId
+end tell
+`;
+
+const OPEN_TAB_SCRIPT = `
+tell application id "${PROVIDER.bundleId}"
+  if (count of windows) is 0 then
+    error "Terminal has no open windows" number 1004
+  end if
+
+  activate
+end tell
+
+delay 0.1
+
+tell application "System Events"
+  tell process "Terminal"
+    click menu item 1 of menu 1 of menu item 2 of menu "Shell" of menu bar 1
+  end tell
+end tell
+
+delay 0.2
+
+tell application id "${PROVIDER.bundleId}"
+  set targetWindowId to id of front window
+  set targetTabIndex to 1
+
+  repeat with ti from 1 to number of tabs of front window
+    if selected of tab ti of front window then
+      set targetTabIndex to ti
+      exit repeat
+    end if
+  end repeat
+
+  set sessionId to ""
+  try
+    set sessionId to tty of tab targetTabIndex of front window
+  end try
+
+  if sessionId is "" then
+    set sessionId to ("window:" & (targetWindowId as text) & ":tab:" & (targetTabIndex as text))
+  end if
+
+  return (targetWindowId as text) & character id 31 & (targetTabIndex as text) & character id 31 & sessionId
+end tell
 `;
 
 const RUNNING_SCRIPT = `return (application id "${PROVIDER.bundleId}" is running) as text`;
@@ -298,10 +461,22 @@ function mapAppleScriptError(message) {
   }
 
   if (message.includes("assistive access") || message.includes("(-1719)")) {
-    return new CLIError("Accessibility permission is required to close Terminal tabs", {
+    return new CLIError("Accessibility permission is required for Terminal keyboard automation", {
       code: "ACCESSIBILITY_DENIED",
       exitCode: 5,
       details: message,
+    });
+  }
+
+  if (message.includes("unsupported key")) {
+    return new CLIError("Unsupported key for Terminal", {
+      code: "UNSUPPORTED_OPTION",
+      exitCode: 2,
+      details: {
+        app: PROVIDER.app,
+        action: "press",
+        supportedKeys: PROVIDER.capabilities.pressKeys,
+      },
     });
   }
 
@@ -420,14 +595,14 @@ export async function getSnapshot() {
 
 export async function sendTextToTarget(target, text, { newline = true } = {}) {
   if (!newline) {
-    throw new CLIError("Terminal does not support send without enter via AppleScript", {
-      code: "UNSUPPORTED_OPTION",
-      exitCode: 2,
-      details: {
-        app: PROVIDER.app,
-        option: "--no-enter",
-      },
-    });
+    await runAppleScript(TYPE_SCRIPT, [String(target.windowId), String(target.tabIndex), text]);
+    return {
+      ok: true,
+      sessionId: target.sessionId,
+      newline,
+      text,
+      method: "system-events-paste",
+    };
   }
 
   await runAppleScript(SEND_SCRIPT, [String(target.windowId), String(target.tabIndex), text]);
@@ -456,6 +631,23 @@ export async function focusTarget(target) {
   };
 }
 
+export async function pressKeyOnTarget(target, key) {
+  await runAppleScript(PRESS_SCRIPT, [
+    String(target.windowId),
+    String(target.tabIndex),
+    String(key).toLowerCase(),
+  ]);
+
+  return {
+    ok: true,
+    sessionId: target.sessionId,
+    windowId: target.windowId,
+    tabIndex: target.tabIndex,
+    key: String(key).toLowerCase(),
+    method: "system-events-key-code",
+  };
+}
+
 export async function closeTarget(target) {
   await runAppleScript(CLOSE_SCRIPT, [String(target.windowId), String(target.tabIndex)]);
 
@@ -466,5 +658,37 @@ export async function closeTarget(target) {
     tabIndex: target.tabIndex,
     scope: "tab",
     method: "ui-shortcut",
+  };
+}
+
+export async function openTarget({ scope = "window" } = {}) {
+  const requestedScope = scope === "tab" ? "tab" : "window";
+  const running = await isRunning();
+  let createdScope = "window";
+  let raw = "";
+
+  if (requestedScope === "tab" && running) {
+    const snapshot = await getSnapshot();
+
+    if (snapshot.counts.windows > 0) {
+      raw = await runAppleScript(OPEN_TAB_SCRIPT);
+      createdScope = "tab";
+    } else {
+      raw = await runAppleScript(OPEN_WINDOW_SCRIPT);
+    }
+  } else {
+    raw = await runAppleScript(OPEN_WINDOW_SCRIPT);
+  }
+
+  const [windowId, tabIndex, sessionSpecifier] = raw.split(FIELD_SEPARATOR);
+
+  return {
+    ok: true,
+    requestedScope,
+    createdScope,
+    windowId: Number(windowId),
+    tabIndex: Number(tabIndex),
+    sessionSpecifier:
+      sessionSpecifier || `${PROVIDER.app}:session:${windowId}:${tabIndex}`,
   };
 }

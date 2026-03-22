@@ -226,7 +226,43 @@ export async function focusTarget(target) {
   return provider.focusTarget(target);
 }
 
+export async function pressKeyOnTarget(target, key) {
+  const provider = ensureProvider(target.app);
+
+  if (typeof provider.pressKeyOnTarget !== "function") {
+    throw new CLIError(`Press is not supported for ${provider.PROVIDER.displayName}`, {
+      code: "UNSUPPORTED_ACTION",
+      exitCode: 2,
+      details: {
+        app: provider.PROVIDER.app,
+        action: "press",
+        capabilities: provider.PROVIDER.capabilities ?? null,
+      },
+    });
+  }
+
+  return provider.pressKeyOnTarget(target, key);
+}
+
 export async function closeTarget(target) {
   const provider = ensureProvider(target.app);
   return provider.closeTarget(target);
+}
+
+export async function openTarget(app, options = {}) {
+  const provider = ensureProvider(app);
+
+  if (typeof provider.openTarget !== "function") {
+    throw new CLIError(`Open is not supported for ${provider.PROVIDER.displayName}`, {
+      code: "UNSUPPORTED_ACTION",
+      exitCode: 2,
+      details: {
+        app: provider.PROVIDER.app,
+        action: "open",
+        capabilities: provider.PROVIDER.capabilities ?? null,
+      },
+    });
+  }
+
+  return provider.openTarget(options);
 }
