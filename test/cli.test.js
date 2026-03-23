@@ -64,12 +64,12 @@ test("spec command returns machine-readable command contract", () => {
     true,
   );
   assert.equal(
-    payload.commands.send.options.some((option) => option.name === "--enter"),
+    payload.commands.send.options.some((option) => option.name === "--no-enter"),
     true,
   );
   assert.equal(
     payload.commands.send.rules.includes(
-      "AI callers should prefer passing --enter or --no-enter explicitly.",
+      "Do not append literal newline characters inside --text or --stdin to simulate submit.",
     ),
     true,
   );
@@ -111,10 +111,22 @@ test("press help explains real keypress workflow", () => {
 test("send help explains explicit enter and staged send modes", () => {
   const help = runCli(["send", "--help"]);
 
-  assert.match(help, /\[--enter \| --no-enter\]/);
-  assert.match(help, /--enter appends enter after send/);
+  assert.match(help, /\[--no-enter\]/);
+  assert.match(help, /send appends enter by default/);
   assert.match(help, /--no-enter stages the payload without submit/);
-  assert.match(help, /--text 'npm test' --enter/);
+  assert.match(help, /Do not append literal newline characters inside --text or stdin to simulate submit/);
+});
+
+test("send rejects deprecated explicit enter flag", () => {
+  assert.throws(
+    () => runCli(["send", "--enter"]),
+    (error) =>
+      error &&
+      typeof error.stdout === "string" &&
+      /send no longer accepts --enter; send submits by default, or pass --no-enter to stage without submit/.test(
+        error.stdout,
+      ),
+  );
 });
 
 test("version flag prints the package version as plain text", () => {

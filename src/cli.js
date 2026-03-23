@@ -81,8 +81,9 @@ function buildSupportedAppsSpec() {
 
 function buildSendRules() {
   const rules = ["Exactly one of --text or --stdin is required."];
-  rules.push("If neither --enter nor --no-enter is passed, send appends enter by default.");
-  rules.push("AI callers should prefer passing --enter or --no-enter explicitly.");
+  rules.push("send appends enter by default.");
+  rules.push("Pass --no-enter only when the payload should remain staged without submit.");
+  rules.push("Do not append literal newline characters inside --text or --stdin to simulate submit.");
 
   if (getAppMetadata("terminal")?.capabilities?.sendWithoutEnter === false) {
     rules.push("Terminal rejects --no-enter.");
@@ -185,7 +186,7 @@ function buildCliSpec() {
   return {
     ok: true,
     source: "termhub",
-    specVersion: 1,
+    specVersion: 2,
     cli: {
       name: "termhub",
       aliases: ["thub"],
@@ -201,6 +202,7 @@ function buildCliSpec() {
       "Use list when the user asks what is open right now.",
       "Use resolve when the user identifies a target by title, tty, current tab, window id, or handle.",
       "Only call send, capture, focus, or close after you have exactly one target.",
+      "send submits by default; only use --no-enter when the text must remain staged.",
       "For interactive TUIs, send text with --no-enter when supported, then call press --key enter.",
       "If resolve returns count 0 or count greater than 1, refine selectors instead of guessing.",
       "Use doctor when app availability, automation permission, or frontmost state are unclear.",
@@ -381,7 +383,7 @@ function buildCliSpec() {
       },
       send: {
         usage:
-          "termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--enter | --no-enter] [--dry-run]",
+          "termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter] [--dry-run]",
         purpose: "Send text into one resolved target.",
         options: [
           {
@@ -410,18 +412,11 @@ function buildCliSpec() {
             description: "Restrict target lookup to one backend.",
           },
           {
-            name: "--enter",
-            type: "boolean",
-            required: false,
-            description:
-              "Append enter after sending. This is the default behavior, but AI callers should pass it explicitly when submit-on-send is intended.",
-          },
-          {
             name: "--no-enter",
             type: "boolean",
             required: false,
             description:
-              "Do not append enter. Use this when the payload should remain staged for a later real key press. Check supportedApps[].capabilities.sendWithoutEnter before using it.",
+              "Do not append enter. Use this only when the payload should remain staged for a later real key press. Check supportedApps[].capabilities.sendWithoutEnter before using it.",
           },
           {
             name: "--dry-run",
@@ -438,7 +433,7 @@ function buildCliSpec() {
         ],
         rules: buildSendRules(),
         output: {
-          topLevelFields: ["ok", "action", "dryRun", "plan", "newline", "bytes", "target", "text"],
+          topLevelFields: ["ok", "action", "dryRun", "plan", "submit", "bytes", "target", "text"],
           targetFields: MATCH_FIELDS,
         },
       },
@@ -735,7 +730,7 @@ function buildExamples() {
       listApp: "windows-terminal",
       open: `termhub open --app ${openApp} --window --dry-run`,
       resolve: "termhub resolve --app windows-terminal --title Task1",
-      send: "termhub send --session windows-terminal:session:<windowHandle>:1 --text 'npm test' --no-enter",
+      send: "termhub send --session windows-terminal:session:<windowHandle>:1 --text 'npm test'",
       press: "termhub press --session windows-terminal:session:<windowHandle>:1 --key enter",
       capture: "termhub capture --session windows-terminal:session:<windowHandle>:1 --lines 30",
       focus: "termhub focus --session windows-terminal:session:<windowHandle>:1",
@@ -753,7 +748,7 @@ function buildExamples() {
       ? "termhub resolve --app iterm2 --title Task1"
       : "termhub resolve --title Task1",
     send: hasSupportedApp("iterm2")
-      ? "termhub send --session iterm2:session:<uuid> --text 'npm test' --no-enter"
+      ? "termhub send --session iterm2:session:<uuid> --text 'npm test'"
       : "termhub send --session <id|handle> --text 'npm test'",
     press: hasSupportedApp("iterm2")
       ? "termhub press --session iterm2:session:<uuid> --key enter"
@@ -799,7 +794,7 @@ Usage:
   termhub open [--app <app>] [--window | --tab] [--dry-run] [--compact]
   termhub list [--app <app>] [--compact]
   termhub resolve [selectors] [--compact]
-  termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--enter | --no-enter] [--dry-run]
+  termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter] [--dry-run]
   termhub press --session <id|handle> --key <key> [--app <app>] [--dry-run]
   termhub capture --session <id|handle> [--app <app>] [--lines <n>]
   termhub focus --session <id|handle> [--app <app>] [--dry-run]
@@ -970,25 +965,26 @@ Hint:
     send: `termhub send
 
 Usage:
-  termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--enter | --no-enter] [--dry-run]
+  termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter] [--dry-run]
 
 Description:
   Send text to one resolved session target.
   Usually call resolve first, then pass the exact handle or sessionId.
   --text sends one string argument.
   --stdin reads the full stdin stream and sends it as one payload.
-  --enter appends enter after send. This is the default, but AI callers should pass it explicitly when submit-on-send is intended.
+  send appends enter by default.
   Check supportedApps[].capabilities.sendWithoutEnter in termhub spec before using --no-enter.
   --no-enter stages the payload without submit. For interactive TUIs, pair --no-enter with a later press --key enter call.
+  Do not append literal newline characters inside --text or stdin to simulate submit.
   --dry-run resolves the target and prints the planned send without writing to the terminal.
 
 Output:
   JSON object with:
-    ok, action, dryRun, plan, newline, bytes, target, text
+    ok, action, dryRun, plan, submit, bytes, target, text
 
 Examples:
-  termhub send --session <id|handle> --text 'npm test' --enter
   ${examples.send}
+  termhub send --session <id|handle> --text 'analyze this error' --no-enter
   termhub send --session <id|handle> --text 'echo hello' --dry-run
   termhub send --session <id|handle> --text 'echo hello'
   ${examples.stdin}
@@ -1353,9 +1349,9 @@ function buildDryRunPlan(action, target, extra = {}) {
       capability: "send",
       sendWithoutEnter: capabilities?.sendWithoutEnter ?? null,
       description:
-        extra.newline === false
-          ? "Would send text without enter."
-          : "Would send text and append enter.",
+        extra.submit === false
+          ? "Would send text without submit."
+          : "Would send text and submit with enter.",
     };
   }
 
@@ -1609,6 +1605,16 @@ async function handleResolve(options) {
 }
 
 async function handleSend(options) {
+  if (options.enter === true) {
+    throw new CLIError(
+      "send no longer accepts --enter; send submits by default, or pass --no-enter to stage without submit",
+      {
+        code: "USAGE_ERROR",
+        exitCode: 2,
+      },
+    );
+  }
+
   const app = normalizeAppOption(options.app);
   const sessionId = requireSessionOption(options, "send");
   const usingText = typeof options.text === "string";
@@ -1623,7 +1629,7 @@ async function handleSend(options) {
 
   const text = usingText ? options.text : await readStdinText();
   const target = await findSessionOrThrow(sessionId, app);
-  const newline = options.enter !== false;
+  const submit = options.enter !== false;
 
   if (options.dryRun === true) {
     writeJson(
@@ -1631,8 +1637,8 @@ async function handleSend(options) {
         ok: true,
         action: "send",
         dryRun: true,
-        plan: buildDryRunPlan("send", target, { newline }),
-        newline,
+        plan: buildDryRunPlan("send", target, { submit }),
+        submit,
         bytes: Buffer.byteLength(text, "utf8"),
         target,
         text,
@@ -1642,14 +1648,14 @@ async function handleSend(options) {
     return;
   }
 
-  await sendTextToTarget(target, text, { newline });
+  await sendTextToTarget(target, text, { newline: submit });
 
   writeJson(
     {
       ok: true,
       action: "send",
       dryRun: false,
-      newline,
+      submit,
       bytes: Buffer.byteLength(text, "utf8"),
       target,
       text,

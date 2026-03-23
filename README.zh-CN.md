@@ -116,7 +116,7 @@ AI 调用：
 
 ```bash
 termhub resolve --app windows-terminal --title API
-termhub send --app windows-terminal --session windows-terminal:session:<window-handle>:<tab-index> --text "npm test" --enter
+termhub send --app windows-terminal --session windows-terminal:session:<window-handle>:<tab-index> --text "npm test"
 ```
 
 ## AI 应该如何使用 termhub
@@ -137,9 +137,9 @@ AI 应该遵守这些规则：
 - 调用 `open` 前，先看目标 backend 的 capabilities 里是否有 `openWindow` / `openTab`
 - 当 `open` 没传 `--app` 时，termhub 会优先选择当前前台且支持该 scope 的 backend
 - `--session` 可以传 session id，也可以传 namespaced handle
-- 对 `send`，AI 应该优先显式传 `--enter` 或 `--no-enter`，不要只依赖默认行为
-- 普通 shell 命令通常应该用 `--enter`，让命令发出后立即执行
+- 对 `send`，默认行为就是提交执行
 - 只有当文本需要先停留在输入框里、后面再配合 `press --key enter` 时，才用 `--no-enter`
+- AI 不应该往 `--text` 或 stdin 里塞字面量换行字符来模拟提交
 - 当用户给的是模糊标题时，优先用 `--title-contains` 和 `--name-contains`
 - 当多个终端后端同时运行时，AI 应该显式加上 `--app`，避免误判
 - 当动作有风险，或者用户希望先确认时，先对 `open`、`send`、`focus`、`close` 使用 `--dry-run`
