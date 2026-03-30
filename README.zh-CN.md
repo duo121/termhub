@@ -28,7 +28,6 @@ brew install duo121/termhub/termhub
 到 GitHub Releases 下载你平台对应的压缩包：
 
 - `termhub_<version>_macos-arm64.tar.gz`
-- `termhub_<version>_macos-x64.tar.gz`
 - `termhub_<version>_windows-x64.zip`
 
 解压后直接调用：

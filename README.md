@@ -28,7 +28,6 @@ brew install duo121/termhub/termhub
 Download the archive for your platform from GitHub Releases:
 
 - `termhub_<version>_macos-arm64.tar.gz`
-- `termhub_<version>_macos-x64.tar.gz`
 - `termhub_<version>_windows-x64.zip`
 
 Extract and run:

@@ -1,11 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const CLI_PATH = new URL("../src/cli.js", import.meta.url);
+const CLI_PATH = fileURLToPath(new URL("../src/cli.js", import.meta.url));
 
 function runCli(args) {
-  return execFileSync(process.execPath, [CLI_PATH.pathname, ...args], {
+  return execFileSync(process.execPath, [CLI_PATH, ...args], {
     encoding: "utf8",
   });
 }

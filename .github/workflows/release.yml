@@ -26,10 +26,6 @@ jobs:
             runner: macos-14
             pkg_target: node20-macos-arm64
             archive_ext: tar.gz
-          - label: macos-x64
-            runner: macos-13
-            pkg_target: node20-macos-x64
-            archive_ext: tar.gz
           - label: windows-x64
             runner: windows-latest
             pkg_target: node20-win-x64
