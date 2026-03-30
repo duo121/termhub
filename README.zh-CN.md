@@ -16,6 +16,36 @@
 npm install -g @duo121/termhub
 ```
 
+或者通过 Homebrew（macOS）安装：
+
+```bash
+brew tap duo121/termhub https://github.com/duo121/termhub
+brew install duo121/termhub/termhub
+```
+
+### 从 GitHub Release 安装（不走 npm）
+
+到 GitHub Releases 下载你平台对应的压缩包：
+
+- `termhub_<version>_macos-arm64.tar.gz`
+- `termhub_<version>_macos-x64.tar.gz`
+- `termhub_<version>_windows-x64.zip`
+
+解压后直接调用：
+
+- macOS：
+
+  ```bash
+  chmod +x termhub
+  ./termhub --version
+  ```
+
+- Windows（PowerShell）：
+
+  ```powershell
+  .\termhub.exe --version
+  ```
+
 安装后，让 AI 先读取契约：
 
 ```bash

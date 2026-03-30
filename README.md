@@ -16,6 +16,36 @@
 npm install -g @duo121/termhub
 ```
 
+Or via Homebrew (macOS):
+
+```bash
+brew tap duo121/termhub https://github.com/duo121/termhub
+brew install duo121/termhub/termhub
+```
+
+### Install From GitHub Release (no npm)
+
+Download the archive for your platform from GitHub Releases:
+
+- `termhub_<version>_macos-arm64.tar.gz`
+- `termhub_<version>_macos-x64.tar.gz`
+- `termhub_<version>_windows-x64.zip`
+
+Extract and run:
+
+- macOS:
+
+  ```bash
+  chmod +x termhub
+  ./termhub --version
+  ```
+
+- Windows (PowerShell):
+
+  ```powershell
+  .\termhub.exe --version
+  ```
+
 Then let the AI read the contract:
 
 ```bash

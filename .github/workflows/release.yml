@@ -1,0 +1,163 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (for example v0.6.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macos-arm64
+            runner: macos-14
+            pkg_target: node20-macos-arm64
+            archive_ext: tar.gz
+          - label: macos-x64
+            runner: macos-13
+            pkg_target: node20-macos-x64
+            archive_ext: tar.gz
+          - label: windows-x64
+            runner: windows-latest
+            pkg_target: node20-win-x64
+            archive_ext: zip
+
+    steps:
+      - name: Checkout tag commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RELEASE_TAG="${{ github.event.inputs.tag }}"
+          else
+            RELEASE_TAG="${GITHUB_REF_NAME}"
+          fi
+          EXPECTED_TAG="v${VERSION}"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "expected_tag=${EXPECTED_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate tag
+        shell: bash
+        run: |
+          if [ "${{ steps.meta.outputs.release_tag }}" != "${{ steps.meta.outputs.expected_tag }}" ]; then
+            echo "Tag mismatch: expected ${{ steps.meta.outputs.expected_tag }}, got ${{ steps.meta.outputs.release_tag }}"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build standalone binary
+        run: npx -y @yao-pkg/pkg@6.14.1 . --targets ${{ matrix.pkg_target }} --output dist/termhub
+
+      - name: Smoke test binary (macOS)
+        if: runner.os == 'macOS'
+        run: ./dist/termhub --version
+
+      - name: Smoke test binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\dist\termhub.exe --version
+
+      - name: Archive release asset (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          ASSET="termhub_${{ steps.meta.outputs.version }}_${{ matrix.label }}.${{ matrix.archive_ext }}"
+
+          mkdir -p release
+          cp dist/termhub release/termhub
+          cp README.md README.zh-CN.md release/
+          tar -czf "${ASSET}" -C release termhub README.md README.zh-CN.md
+          shasum -a 256 "${ASSET}" > "${ASSET}.sha256"
+
+      - name: Archive release asset (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $asset = "termhub_${{ steps.meta.outputs.version }}_${{ matrix.label }}.${{ matrix.archive_ext }}"
+
+          New-Item -ItemType Directory -Path release -Force | Out-Null
+          Copy-Item "dist/termhub.exe" "release/termhub.exe"
+          Copy-Item README.md,README.zh-CN.md "release"
+          Compress-Archive -Path "release/*" -DestinationPath $asset -Force
+
+          $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLower()
+          "$hash  $asset" | Out-File -FilePath "$asset.sha256" -Encoding ascii
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: termhub-${{ matrix.label }}
+          path: |
+            termhub_${{ steps.meta.outputs.version }}_${{ matrix.label }}.*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Resolve release tag
+        id: meta
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "release_tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Build combined checksums
+        shell: bash
+        run: |
+          cd dist
+          cat termhub_*.sha256 > checksums.txt
+          ls -lh
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.release_tag }}
+          generate_release_notes: true
+          files: |
+            dist/termhub_*
+            dist/checksums.txt
+          fail_on_unmatched_files: true

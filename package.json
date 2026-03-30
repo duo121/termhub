@@ -36,6 +36,7 @@
     "test": "node --test",
     "list": "node ./src/cli.js list",
     "doctor": "node ./src/cli.js doctor",
+    "build:binary:host": "npx -y @yao-pkg/pkg@6.14.1 . --targets host --output dist/termhub",
     "pack:check": "npm pack --dry-run",
     "publish:dry-run": "npm publish --dry-run",
     "prepublishOnly": "npm test"
