@@ -87,8 +87,14 @@ test("spec command returns machine-readable command contract", () => {
 test("close help explains terminal-specific behavior", () => {
   const help = runCli(["close", "--help"]);
 
-  assert.match(help, /Terminal closes the selected tab with the app's standard close shortcut/);
-  assert.match(help, /Busy Terminal tabs may still trigger the app's own confirmation dialog/);
+  if (process.platform === "darwin") {
+    assert.match(help, /Terminal closes the selected tab with the app's standard close shortcut/);
+    assert.match(help, /Busy Terminal tabs may still trigger the app's own confirmation dialog/);
+    return;
+  }
+
+  assert.match(help, /Windows Terminal closes the selected tab with its standard Ctrl\+Shift\+W shortcut/);
+  assert.match(help, /Command Prompt closes the target window through CloseMainWindow/);
 });
 
 test("open help explains scope selection and dry-run", () => {
