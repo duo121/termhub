@@ -2,7 +2,17 @@
 
 [中文说明](./README.zh-CN.md)
 
-`termhub` is an AI-native CLI for inspecting and controlling terminal windows, tabs, sessions, handles, and titles.
+![termhub cover](./assets/readme-cover.en.png)
+
+`termhub` is an AI-native terminal control tool.
+
+It is designed for this closed loop:
+
+1. AI inspects what terminal sessions are open.
+2. AI opens a window or tab when needed.
+3. AI launches or targets a Codex session.
+4. AI sends the task into that session.
+5. AI captures the output and returns it to the user.
 
 - Command: `termhub`
 - Alias: `thub`
@@ -16,174 +26,137 @@
 npm install -g @duo121/termhub
 ```
 
-Or via Homebrew (macOS):
+Or Homebrew (macOS):
 
 ```bash
 brew tap duo121/termhub https://github.com/duo121/termhub
 brew install duo121/termhub/termhub
 ```
 
-### Install From GitHub Release (no npm)
-
-Download the archive for your platform from GitHub Releases:
+Install from GitHub Releases (without npm):
 
 - `termhub_<version>_macos-arm64.tar.gz`
 - `termhub_<version>_windows-x64.zip`
 
-Extract and run:
+After extraction:
 
-- macOS:
+- macOS
 
-  ```bash
-  chmod +x termhub
-  ./termhub --version
-  ```
+```bash
+chmod +x termhub
+./termhub --version
+```
 
-- Windows (PowerShell):
+- Windows (PowerShell)
 
-  ```powershell
-  .\termhub.exe --version
-  ```
+```powershell
+.\termhub.exe --version
+```
 
-Then let the AI read the contract:
+## Quick Start For AI
 
 ```bash
 termhub --help
 termhub spec
+termhub list
 ```
 
-## What The User Needs To Do
+Use `spec` as machine-readable truth and `--help` as human-readable truth.
 
-The user only needs to ask the AI in natural language.
+## SDK Status
 
-The user does not need to learn the CLI.
+`termhub` is currently **CLI-first**, not a stable SDK package.
 
-Typical requests:
+- You can technically import internal files from `src/`, but that API is not versioned or guaranteed.
+- The supported integration surface today is the CLI JSON contract via `termhub spec`.
 
-- "Use termhub to open a fresh iTerm2 window for me."
-- "Use termhub to show me every iTerm2 tab I have open."
-- "Use termhub to close the tab named Task1."
-- "Use termhub to read the last 50 lines from my current Terminal tab."
-- "Use termhub to run `npm test` in the Windows Terminal tab called API."
+If you need SDK usage, recommended short-term pattern:
 
-## Scenario 1: Open A New Terminal For Me
+1. Call `termhub` as a subprocess.
+2. Parse JSON from `stdout`.
+3. Treat `specVersion` and command schemas as compatibility gates.
 
-User asks the AI:
+## Command Map
 
-> Use termhub to open a fresh iTerm2 window for me.
+| Top-Level Command | What It Does | Common Secondary Flags |
+| --- | --- | --- |
+| `open` | Open terminal window or tab | `--app` `--window` `--tab` `--dry-run` |
+| `list` | List running windows/tabs/sessions | `--app` `--compact` |
+| `resolve` | Narrow fuzzy target to one exact session | `--title` `--title-contains` `--session` `--current-tab` |
+| `send` | Send text to resolved target session | `--text` `--stdin` `--no-enter` `--dry-run` |
+| `press` | Send real key/combo/sequence events | `--key` `--combo` `--sequence` `--repeat` `--delay` |
+| `capture` | Read visible terminal output | `--session` `--lines` `--app` |
+| `focus` | Bring target window/session to front | `--session` `--app` `--dry-run` |
+| `close` | Close target tab or window | `--session` `--app` `--dry-run` |
+| `doctor` | Check platform/backend/automation readiness | `--app` `--compact` |
+| `spec` | Print machine-readable JSON contract | `--compact` |
 
-AI workflow:
+## AI Usage Rules
 
-```bash
-termhub open --app iterm2 --window
-```
+1. Always `resolve` to one exact target before mutating commands.
+2. Use `--app` when multiple backends are active.
+3. Use `--dry-run` before risky operations.
+4. Use `send --no-enter` only when you plan a separate real key submit.
+5. Never fake submit by appending literal newlines inside `--text` or stdin.
 
-The AI gets JSON with:
+## Press Modes
 
-- the resolved `target`
-- the backend `result`
-- a reusable `handle` / `sessionId` for the new terminal
+`press` supports exactly one input mode:
 
-## Scenario 2: Show Everything That Is Open
+- `--key <key>`
+- `--combo <combo>` (for example `ctrl+c`, `cmd+k`)
+- `--sequence <steps>` (for example `esc,down*5,enter`)
 
-User asks the AI:
+Extra controls:
 
-> Use termhub to show me every iTerm2 tab I have open.
+- `--repeat <n>`: only for `--key` and `--combo`
+- `--delay <ms>`: delay between repeated or sequenced key events
 
-AI workflow:
-
-```bash
-termhub list --app iterm2
-```
-
-The AI gets JSON with:
-
-- windows
-- tabs
-- sessions
-- handles
-- tab titles
-- TTYs when the backend exposes them
-
-## Scenario 3: Close One Specific Tab
-
-User asks the AI:
-
-> Use termhub to close the tab named Task1.
-
-AI workflow:
-
-```bash
-termhub resolve --title Task1
-termhub close --session <resolved-handle-or-session-id>
-```
-
-The AI should not guess.
-
-If `resolve` returns `count: 0` or `count > 1`, the AI should refine the selector or ask a follow-up question.
-
-## Scenario 4: Read The Current Tab
-
-User asks the AI:
-
-> Use termhub to read the last 50 lines from my current Terminal tab.
-
-AI workflow:
-
-```bash
-termhub resolve --app terminal --current-window --current-tab --current-session
-termhub capture --app terminal --session terminal:session:<window-id>:<tab-index> --lines 50
-```
-
-## Scenario 5: Send A Command Into Windows Terminal
-
-User asks the AI:
-
-> Use termhub to run npm test in the Windows Terminal tab called API.
-
-AI workflow:
-
-```bash
-termhub resolve --app windows-terminal --title API
-termhub send --app windows-terminal --session windows-terminal:session:<window-handle>:<tab-index> --text "npm test"
-```
-
-## How The AI Should Use termhub
-
-The standard pattern is:
-
-1. Use `open` when the user asks the AI to create a new terminal window or tab.
-2. Use `list` when the user asks what is open.
-3. Use `resolve` when the user describes a target by title, TTY, current tab, window id, or handle.
-4. Use `send`, `capture`, `focus`, or `close` only after the target is exact.
-5. Use `doctor` when platform, permissions, or automation state are unclear.
-
-Rules the AI should follow:
-
-- `termhub spec` is the machine-readable source of truth.
-- `termhub --help` and `termhub <command> --help` are the human-readable source of truth.
-- All command results are printed as JSON to `stdout`.
-- `open` should prefer a backend whose capabilities advertise `openWindow` / `openTab`.
-- If `--app` is omitted for `open`, termhub prefers the frontmost supported backend that supports the requested scope.
-- `--session` accepts either a session id or a namespaced handle.
-- On `send`, submit is the default behavior.
-- Use `--no-enter` only when the payload should remain staged for a later real key press such as `press --key enter`.
-- `press` accepts exactly one mode: `--key`, `--combo`, or `--sequence`.
-- Use `--combo` for key chords such as `ctrl+c` or `cmd+k`.
-- Use `--sequence` for ordered key steps such as `esc,esc` or `down*5,enter`.
-- Use `--repeat` only with `--key` or `--combo`; use `--delay` to control milliseconds between steps.
-- The AI must not append `\n` or other literal newline characters inside `--text` or stdin to simulate submit.
-- `--title-contains` and `--name-contains` are safer when the user gives an approximate label instead of an exact title.
-- When multiple terminal backends are running, the AI should add `--app` for deterministic targeting.
-- Use `--dry-run` before `open`, `send`, `focus`, or `close` when the user wants confirmation or when the action is high-risk.
-- Apple Terminal supports `--no-enter`, but the AI should only use it when it intends to submit separately.
-- Windows Terminal and CMD use PowerShell/UI Automation for focus, send, capture, and close.
-- Windows capture is best-effort and depends on visible text being readable through UI Automation.
-
-Press examples:
+Examples:
 
 ```bash
 termhub press --session <id|handle> --key enter
 termhub press --session <id|handle> --combo ctrl+c
 termhub press --session <id|handle> --sequence "esc,down*3,enter" --delay 60
 ```
+
+## Typical AI Scenarios
+
+Open a new iTerm2 window:
+
+```bash
+termhub open --app iterm2 --window
+```
+
+List all iTerm2 tabs:
+
+```bash
+termhub list --app iterm2
+```
+
+Close a specific tab by title:
+
+```bash
+termhub resolve --title Task1
+termhub close --session <resolved-handle-or-session-id>
+```
+
+Read current Terminal tab (last 50 lines):
+
+```bash
+termhub resolve --app terminal --current-window --current-tab --current-session
+termhub capture --app terminal --session terminal:session:<window-id>:<tab-index> --lines 50
+```
+
+Run command in Windows Terminal tab titled `API`:
+
+```bash
+termhub resolve --app windows-terminal --title API
+termhub send --app windows-terminal --session windows-terminal:session:<window-handle>:<tab-index> --text "npm test"
+```
+
+## Notes
+
+- `--session` accepts native session id or namespaced handle.
+- Windows `focus/send/capture/close` rely on PowerShell + UI Automation.
+- Windows `capture` is best-effort based on visible text accessibility.
