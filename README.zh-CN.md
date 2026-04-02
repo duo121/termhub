@@ -168,6 +168,10 @@ AI 应该遵守这些规则：
 - `--session` 可以传 session id，也可以传 namespaced handle
 - 对 `send`，默认行为就是提交执行
 - 只有当文本需要先停留在输入框里、后面再配合 `press --key enter` 时，才用 `--no-enter`
+- `press` 必须且只能用一种模式：`--key`、`--combo`、`--sequence`
+- `--combo` 用于组合键，例如 `ctrl+c` 或 `cmd+k`
+- `--sequence` 用于按键序列，例如 `esc,esc` 或 `down*5,enter`
+- `--repeat` 只能和 `--key`/`--combo` 搭配，`--delay` 用于控制每步间隔毫秒数
 - AI 不应该往 `--text` 或 stdin 里塞字面量换行字符来模拟提交
 - 当用户给的是模糊标题时，优先用 `--title-contains` 和 `--name-contains`
 - 当多个终端后端同时运行时，AI 应该显式加上 `--app`，避免误判
@@ -175,3 +179,11 @@ AI 应该遵守这些规则：
 - Apple Terminal 支持 `--no-enter`，但只有当 AI 打算后续单独提交时才应该使用
 - Windows Terminal 和 CMD 的 `focus`、`send`、`capture`、`close` 依赖 PowerShell / UI Automation
 - Windows 上的 `capture` 是 best-effort，前提是可见文本能被 UI Automation 读取到
+
+`press` 示例：
+
+```bash
+termhub press --session <id|handle> --key enter
+termhub press --session <id|handle> --combo ctrl+c
+termhub press --session <id|handle> --sequence "esc,down*3,enter" --delay 60
+```

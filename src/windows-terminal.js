@@ -24,7 +24,27 @@ export const PROVIDER = Object.freeze({
     send: true,
     sendWithoutEnter: true,
     press: true,
-    pressKeys: ["enter", "return"],
+    pressKeys: [
+      "enter",
+      "return",
+      "esc",
+      "tab",
+      "backspace",
+      "delete",
+      "space",
+      "up",
+      "down",
+      "left",
+      "right",
+      "pageup",
+      "pagedown",
+      "home",
+      "end",
+    ],
+    pressCombos: ["ctrl+c", "ctrl+d", "ctrl+l", "shift+tab"],
+    pressSequence: true,
+    pressRepeat: true,
+    pressDelay: true,
     capture: true,
     captureMode: "best-effort-visible-text",
     focus: true,
@@ -83,6 +103,126 @@ async function runWindowsTerminalJson(body, options = {}) {
 
 function processNamesLiteral() {
   return PROVIDER.processNames.map((name) => toPowerShellStringLiteral(name)).join(", ");
+}
+
+function normalizePressRequest(request) {
+  if (typeof request === "string") {
+    return {
+      mode: "key",
+      key: String(request).toLowerCase(),
+      repeat: 1,
+      delayMs: 40,
+    };
+  }
+
+  return {
+    mode: request?.mode ?? "key",
+    key: request?.key ?? null,
+    combo: request?.combo ?? null,
+    sequence: Array.isArray(request?.sequence) ? request.sequence : null,
+    repeat: Number(request?.repeat ?? 1),
+    delayMs: Number(request?.delayMs ?? 40),
+  };
+}
+
+function normalizePressStep(step) {
+  if (step?.type === "combo") {
+    return {
+      type: "combo",
+      key: String(step.key).toLowerCase(),
+      modifiers: Array.isArray(step.modifiers) ? step.modifiers : [],
+      expression: step.expression ?? null,
+    };
+  }
+
+  return {
+    type: "key",
+    key: String(step?.key ?? step).toLowerCase(),
+    modifiers: [],
+    expression: null,
+  };
+}
+
+function expandPressSteps(request) {
+  const normalized = normalizePressRequest(request);
+
+  if (normalized.mode === "sequence") {
+    return (normalized.sequence ?? []).map((step) => normalizePressStep(step));
+  }
+
+  if (normalized.mode === "combo") {
+    const comboStep = normalizePressStep(normalized.combo);
+    return Array.from({ length: normalized.repeat }, () => comboStep);
+  }
+
+  const keyStep = normalizePressStep({ type: "key", key: normalized.key });
+  return Array.from({ length: normalized.repeat }, () => keyStep);
+}
+
+function keyToSendKeysToken(key) {
+  const mapping = {
+    enter: "~",
+    return: "~",
+    esc: "{ESC}",
+    tab: "{TAB}",
+    backspace: "{BACKSPACE}",
+    delete: "{DELETE}",
+    space: " ",
+    up: "{UP}",
+    down: "{DOWN}",
+    left: "{LEFT}",
+    right: "{RIGHT}",
+    pageup: "{PGUP}",
+    pagedown: "{PGDN}",
+    home: "{HOME}",
+    end: "{END}",
+  };
+
+  if (mapping[key]) {
+    return mapping[key];
+  }
+
+  if (/^[a-z0-9]$/.test(key)) {
+    return key;
+  }
+
+  return null;
+}
+
+function stepToSendKeysToken(step) {
+  const baseToken = keyToSendKeysToken(step.key);
+  if (!baseToken) {
+    throw new CLIError("Unsupported key for Windows Terminal", {
+      code: "UNSUPPORTED_OPTION",
+      exitCode: 2,
+      details: {
+        app: PROVIDER.app,
+        action: "press",
+        supportedKeys: PROVIDER.capabilities.pressKeys,
+        supportedCombos: PROVIDER.capabilities.pressCombos,
+      },
+    });
+  }
+
+  if (step.type !== "combo") {
+    return baseToken;
+  }
+
+  const modifiers = new Set(step.modifiers ?? []);
+  if (modifiers.has("cmd")) {
+    throw new CLIError("Windows Terminal does not support cmd modifier in --combo", {
+      code: "UNSUPPORTED_OPTION",
+      exitCode: 2,
+      details: {
+        app: PROVIDER.app,
+        action: "press",
+        requestedCombo: step.expression ?? null,
+      },
+    });
+  }
+
+  const prefix = `${modifiers.has("ctrl") ? "^" : ""}${modifiers.has("alt") ? "%" : ""}${modifiers.has("shift") ? "+" : ""}`;
+  return `${prefix}${baseToken}`;
 }
 
 export function parseSnapshot(raw) {
@@ -354,31 +494,37 @@ $payload | ConvertTo-Json -Depth 6 -Compress
   };
 }
 
-export async function pressKeyOnTarget(target, key) {
-  const requestedKey = String(key).toLowerCase();
-  const normalizedKey = requestedKey === "return" ? "enter" : requestedKey;
-  if (normalizedKey !== "enter") {
-    throw new CLIError("Unsupported key for Windows Terminal", {
-      code: "UNSUPPORTED_OPTION",
+export async function pressKeyOnTarget(target, request) {
+  const normalized = normalizePressRequest(request);
+  const steps = expandPressSteps(normalized);
+  if (steps.length === 0) {
+    throw new CLIError("press sequence cannot be empty", {
+      code: "USAGE_ERROR",
       exitCode: 2,
-      details: {
-        app: PROVIDER.app,
-        action: "press",
-        supportedKeys: PROVIDER.capabilities.pressKeys,
-      },
     });
   }
+
+  const sendKeysTokens = steps.map((step) => stepToSendKeysToken(step));
+  const keysLiteral = sendKeysTokens.map((token) => toPowerShellStringLiteral(token)).join(", ");
+  const delayMs = Math.max(0, Math.trunc(normalized.delayMs));
 
   await runWindowsTerminalJson(
     `
 $windowHandle = ${target.windowId}
 $tabIndex = ${target.tabIndex}
+$delayMs = ${delayMs}
+$keys = @(${keysLiteral})
 
 if (-not (Select-TermhubTab $windowHandle $tabIndex)) {
   throw "Session not found"
 }
 
-Send-TermhubKeys '~'
+for ($i = 0; $i -lt $keys.Count; $i++) {
+  Send-TermhubKeys $keys[$i]
+  if ($delayMs -gt 0 -and $i -lt ($keys.Count - 1)) {
+    Start-Sleep -Milliseconds $delayMs
+  }
+}
 
 $payload = [pscustomobject]@{
   ok = $true
@@ -396,7 +542,13 @@ $payload | ConvertTo-Json -Depth 6 -Compress
     sessionId: target.sessionId,
     windowId: target.windowId,
     tabIndex: target.tabIndex,
-    key: normalizedKey,
+    mode: normalized.mode,
+    key: normalized.mode === "key" ? normalized.key : null,
+    combo: normalized.mode === "combo" ? normalized.combo?.expression ?? null : null,
+    sequence:
+      normalized.mode === "sequence" ? steps.map((step) => step.expression ?? step.key) : null,
+    repeat: normalized.repeat,
+    delayMs: normalized.delayMs,
     method: "sendkeys",
   };
 }

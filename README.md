@@ -168,6 +168,10 @@ Rules the AI should follow:
 - `--session` accepts either a session id or a namespaced handle.
 - On `send`, submit is the default behavior.
 - Use `--no-enter` only when the payload should remain staged for a later real key press such as `press --key enter`.
+- `press` accepts exactly one mode: `--key`, `--combo`, or `--sequence`.
+- Use `--combo` for key chords such as `ctrl+c` or `cmd+k`.
+- Use `--sequence` for ordered key steps such as `esc,esc` or `down*5,enter`.
+- Use `--repeat` only with `--key` or `--combo`; use `--delay` to control milliseconds between steps.
 - The AI must not append `\n` or other literal newline characters inside `--text` or stdin to simulate submit.
 - `--title-contains` and `--name-contains` are safer when the user gives an approximate label instead of an exact title.
 - When multiple terminal backends are running, the AI should add `--app` for deterministic targeting.
@@ -175,3 +179,11 @@ Rules the AI should follow:
 - Apple Terminal supports `--no-enter`, but the AI should only use it when it intends to submit separately.
 - Windows Terminal and CMD use PowerShell/UI Automation for focus, send, capture, and close.
 - Windows capture is best-effort and depends on visible text being readable through UI Automation.
+
+Press examples:
+
+```bash
+termhub press --session <id|handle> --key enter
+termhub press --session <id|handle> --combo ctrl+c
+termhub press --session <id|handle> --sequence "esc,down*3,enter" --delay 60
+```

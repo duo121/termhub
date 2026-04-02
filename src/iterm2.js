@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { CLIError } from "./errors.js";
 import { createProviderSnapshot } from "./snapshot.js";
@@ -17,7 +18,27 @@ export const PROVIDER = Object.freeze({
     send: true,
     sendWithoutEnter: true,
     press: true,
-    pressKeys: ["enter", "return"],
+    pressKeys: [
+      "enter",
+      "return",
+      "esc",
+      "tab",
+      "backspace",
+      "delete",
+      "space",
+      "up",
+      "down",
+      "left",
+      "right",
+      "pageup",
+      "pagedown",
+      "home",
+      "end",
+    ],
+    pressCombos: ["ctrl+c", "ctrl+d", "ctrl+l", "cmd+k", "shift+tab"],
+    pressSequence: true,
+    pressRepeat: true,
+    pressDelay: true,
     capture: true,
     captureMode: "native",
     focus: true,
@@ -200,46 +221,6 @@ on run argv
 end run
 `;
 
-const PRESS_SCRIPT = `
-on run argv
-  if (count of argv) is not 4 then
-    error "expected window id, tab index, session index, and key" number 1002
-  end if
-
-  set targetWindowId to item 1 of argv
-  set targetTabIndex to item 2 of argv as integer
-  set targetSessionIndex to item 3 of argv as integer
-  set targetKey to item 4 of argv
-
-  if application id "${PROVIDER.bundleId}" is not running then
-    error "iTerm2 is not running" number 1001
-  end if
-
-  tell application id "${PROVIDER.bundleId}"
-    tell window id targetWindowId to select
-    tell tab targetTabIndex of window id targetWindowId to select
-    tell session targetSessionIndex of tab targetTabIndex of window id targetWindowId to select
-    activate
-  end tell
-
-  delay 0.05
-
-  tell application "System Events"
-    if targetKey is "enter" then
-      key code 76
-      return "ok"
-    end if
-
-    if targetKey is "return" then
-      key code 36
-      return "ok"
-    end if
-  end tell
-
-  error "unsupported key" number 1004
-end run
-`;
-
 const CLOSE_SCRIPT = `
 on run argv
   if (count of argv) is not 2 then
@@ -404,6 +385,129 @@ function toNullableText(value) {
   return value === "" ? null : value;
 }
 
+function normalizePressRequest(request) {
+  if (typeof request === "string") {
+    return {
+      mode: "key",
+      key: String(request).toLowerCase(),
+      repeat: 1,
+      delayMs: 40,
+    };
+  }
+
+  return {
+    mode: request?.mode ?? "key",
+    key: request?.key ?? null,
+    combo: request?.combo ?? null,
+    sequence: Array.isArray(request?.sequence) ? request.sequence : null,
+    repeat: Number(request?.repeat ?? 1),
+    delayMs: Number(request?.delayMs ?? 40),
+  };
+}
+
+function keyCodeForAppleScript(key) {
+  const mapping = {
+    enter: 76,
+    return: 36,
+    esc: 53,
+    tab: 48,
+    backspace: 51,
+    delete: 117,
+    space: 49,
+    up: 126,
+    down: 125,
+    left: 123,
+    right: 124,
+    pageup: 116,
+    pagedown: 121,
+    home: 115,
+    end: 119,
+  };
+  return mapping[key] ?? null;
+}
+
+function formatModifier(modifier) {
+  if (modifier === "ctrl") {
+    return "control down";
+  }
+  if (modifier === "cmd") {
+    return "command down";
+  }
+  if (modifier === "alt") {
+    return "option down";
+  }
+  if (modifier === "shift") {
+    return "shift down";
+  }
+  return null;
+}
+
+function normalizePressStep(step) {
+  if (step?.type === "combo") {
+    return {
+      type: "combo",
+      key: String(step.key).toLowerCase(),
+      modifiers: Array.isArray(step.modifiers) ? step.modifiers : [],
+      expression: step.expression ?? null,
+    };
+  }
+
+  return {
+    type: "key",
+    key: String(step?.key ?? step).toLowerCase(),
+    modifiers: [],
+    expression: null,
+  };
+}
+
+function expandPressSteps(request) {
+  const normalized = normalizePressRequest(request);
+
+  if (normalized.mode === "sequence") {
+    return (normalized.sequence ?? []).map((step) => normalizePressStep(step));
+  }
+
+  if (normalized.mode === "combo") {
+    const comboStep = normalizePressStep(normalized.combo);
+    return Array.from({ length: normalized.repeat }, () => comboStep);
+  }
+
+  const keyStep = normalizePressStep({ type: "key", key: normalized.key });
+  return Array.from({ length: normalized.repeat }, () => keyStep);
+}
+
+function buildPressEventScript(step) {
+  const keyCode = keyCodeForAppleScript(step.key);
+  const normalizedModifiers = [...new Set(step.modifiers.map(formatModifier).filter(Boolean))];
+  const usingClause =
+    normalizedModifiers.length > 0 ? ` using {${normalizedModifiers.join(", ")}}` : "";
+
+  if (keyCode != null) {
+    return `tell application "System Events"
+  key code ${keyCode}${usingClause}
+end tell
+`;
+  }
+
+  if (/^[a-z0-9]$/.test(step.key)) {
+    return `tell application "System Events"
+  keystroke "${step.key}"${usingClause}
+end tell
+`;
+  }
+
+  throw new CLIError("Unsupported key for iTerm2", {
+    code: "UNSUPPORTED_OPTION",
+    exitCode: 2,
+    details: {
+      app: PROVIDER.app,
+      action: "press",
+      supportedKeys: PROVIDER.capabilities.pressKeys,
+      supportedCombos: PROVIDER.capabilities.pressCombos,
+    },
+  });
+}
+
 export function parseSnapshot(raw) {
   const snapshot = createProviderSnapshot(PROVIDER);
 
@@ -530,13 +634,28 @@ export async function focusTarget(target) {
   };
 }
 
-export async function pressKeyOnTarget(target, key) {
-  await runAppleScript(PRESS_SCRIPT, [
+export async function pressKeyOnTarget(target, request) {
+  const normalized = normalizePressRequest(request);
+  const steps = expandPressSteps(normalized);
+  if (steps.length === 0) {
+    throw new CLIError("press sequence cannot be empty", {
+      code: "USAGE_ERROR",
+      exitCode: 2,
+    });
+  }
+
+  await runAppleScript(FOCUS_SCRIPT, [
     String(target.windowId),
     String(target.tabIndex),
     String(target.sessionIndex),
-    String(key).toLowerCase(),
   ]);
+
+  for (let index = 0; index < steps.length; index += 1) {
+    await runAppleScript(buildPressEventScript(steps[index]));
+    if (normalized.delayMs > 0 && index < steps.length - 1) {
+      await delay(normalized.delayMs);
+    }
+  }
 
   return {
     ok: true,
@@ -544,8 +663,14 @@ export async function pressKeyOnTarget(target, key) {
     windowId: target.windowId,
     tabIndex: target.tabIndex,
     sessionIndex: target.sessionIndex,
-    key: String(key).toLowerCase(),
-    method: "system-events-key-code",
+    mode: normalized.mode,
+    key: normalized.mode === "key" ? normalized.key : null,
+    combo: normalized.mode === "combo" ? normalized.combo?.expression ?? null : null,
+    sequence:
+      normalized.mode === "sequence" ? steps.map((step) => step.expression ?? step.key) : null,
+    repeat: normalized.repeat,
+    delayMs: normalized.delayMs,
+    method: "system-events",
   };
 }
 

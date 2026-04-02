@@ -45,6 +45,38 @@ const MATCH_FIELDS = [
 ];
 
 const SUPPORTED_APP_VALUES = SUPPORTED_APPS.map((app) => app.app);
+const SUPPORTED_PRESS_KEYS = new Set([
+  "enter",
+  "return",
+  "esc",
+  "tab",
+  "backspace",
+  "delete",
+  "space",
+  "up",
+  "down",
+  "left",
+  "right",
+  "pageup",
+  "pagedown",
+  "home",
+  "end",
+]);
+const SUPPORTED_PRESS_MODIFIERS = new Set(["ctrl", "cmd", "alt", "shift"]);
+const PRESS_KEY_ALIASES = Object.freeze({
+  escape: "esc",
+  pgup: "pageup",
+  pageup: "pageup",
+  pgdn: "pagedown",
+  pagedown: "pagedown",
+  arrowup: "up",
+  arrowdown: "down",
+  arrowleft: "left",
+  arrowright: "right",
+  control: "ctrl",
+  command: "cmd",
+  option: "alt",
+});
 
 function hasSupportedApp(app) {
   return SUPPORTED_APP_VALUES.includes(app);
@@ -97,7 +129,7 @@ function buildSendRules() {
 }
 
 function buildPressRules() {
-  const rules = ["--key is required."];
+  const rules = ["Exactly one of --key, --combo, or --sequence is required."];
   const supportedKeys = [
     ...new Set(
       SUPPORTED_APPS.flatMap((app) =>
@@ -109,6 +141,10 @@ function buildPressRules() {
   if (supportedKeys.length > 0) {
     rules.push(`Currently supported key values on this platform: ${supportedKeys.join(", ")}.`);
   }
+
+  rules.push("Use --combo for chords such as ctrl+c or cmd+k.");
+  rules.push("Use --sequence for ordered key steps such as esc,esc or down*5,enter.");
+  rules.push("--repeat applies to --key/--combo only. --delay sets milliseconds between steps.");
 
   return rules;
 }
@@ -179,6 +215,8 @@ function buildPressNotes() {
     notes.push("Windows key presses use PowerShell SendKeys after focusing the resolved target.");
   }
 
+  notes.push("Sequence items support *N repetition, for example down*5,enter.");
+
   return notes;
 }
 
@@ -186,7 +224,7 @@ function buildCliSpec() {
   return {
     ok: true,
     source: "termhub",
-    specVersion: 2,
+    specVersion: 3,
     cli: {
       name: "termhub",
       aliases: ["thub"],
@@ -212,7 +250,7 @@ function buildCliSpec() {
       transport: "stdout JSON",
       selectors: "All resolve selectors are ANDed together.",
       capabilities:
-        "Each supported app advertises a capabilities object so the AI can determine whether send, sendWithoutEnter, press, pressKeys, capture, focus, close, tty selectors, contains matching, and dry-run planning are supported before calling a mutating command.",
+        "Each supported app advertises a capabilities object so the AI can determine whether send, sendWithoutEnter, press, pressKeys, pressCombos, pressSequence, capture, focus, close, tty selectors, contains matching, and dry-run planning are supported before calling a mutating command.",
       sessionSpecifier:
         "--session accepts either a backend session id or a namespaced handle such as iterm2:session:<uuid>, terminal:session:<windowId>:<tabIndex>, windows-terminal:session:<windowHandle>:<tabIndex>, or cmd:session:<pid>.",
       errors: {
@@ -438,7 +476,8 @@ function buildCliSpec() {
         },
       },
       press: {
-        usage: "termhub press --session <id|handle> --key <key> [--app <app>] [--dry-run]",
+        usage:
+          "termhub press --session <id|handle> (--key <key> | --combo <combo> | --sequence <steps>) [--repeat <n>] [--delay <ms>] [--app <app>] [--dry-run]",
         purpose: "Press a real key on one resolved target after focusing it.",
         options: [
           {
@@ -450,9 +489,35 @@ function buildCliSpec() {
           {
             name: "--key",
             type: "string",
-            required: true,
+            required: false,
             description:
               "Key name to press. Check supportedApps[].capabilities.pressKeys or this command's rules before calling.",
+          },
+          {
+            name: "--combo",
+            type: "string",
+            required: false,
+            description:
+              "One key chord, for example ctrl+c, cmd+k, or shift+tab. Check supportedApps[].capabilities.pressCombos before calling.",
+          },
+          {
+            name: "--sequence",
+            type: "string",
+            required: false,
+            description:
+              "Comma-separated key steps, for example esc,esc or down*5,enter. Steps may use *N repeat suffix.",
+          },
+          {
+            name: "--repeat",
+            type: "integer",
+            required: false,
+            description: "Repeat count for --key or --combo. Must be at least 1.",
+          },
+          {
+            name: "--delay",
+            type: "integer",
+            required: false,
+            description: "Delay in milliseconds between repeated or sequenced key events. Default: 40.",
           },
           {
             name: "--app",
@@ -477,7 +542,20 @@ function buildCliSpec() {
         rules: buildPressRules(),
         notes: buildPressNotes(),
         output: {
-          topLevelFields: ["ok", "action", "dryRun", "plan", "key", "target", "result"],
+          topLevelFields: [
+            "ok",
+            "action",
+            "dryRun",
+            "plan",
+            "mode",
+            "key",
+            "combo",
+            "sequence",
+            "repeat",
+            "delayMs",
+            "target",
+            "result",
+          ],
           targetFields: MATCH_FIELDS,
         },
       },
@@ -707,7 +785,7 @@ function buildRootBackendNotes() {
   }
 
   if (SUPPORTED_APPS.some((app) => app.capabilities?.press === true)) {
-    notes.push("press sends a real key event. Use it for interactive TUIs that need an actual Enter key press.");
+    notes.push("press sends real key events. Use --key, --combo, or --sequence for interactive TUIs.");
   }
 
   if (hasSupportedApp("windows-terminal")) {
@@ -732,6 +810,10 @@ function buildExamples() {
       resolve: "termhub resolve --app windows-terminal --title Task1",
       send: "termhub send --session windows-terminal:session:<windowHandle>:1 --text 'npm test'",
       press: "termhub press --session windows-terminal:session:<windowHandle>:1 --key enter",
+      pressCombo:
+        "termhub press --session windows-terminal:session:<windowHandle>:1 --combo ctrl+c",
+      pressSequence:
+        "termhub press --session windows-terminal:session:<windowHandle>:1 --sequence 'esc,down*2,enter'",
       capture: "termhub capture --session windows-terminal:session:<windowHandle>:1 --lines 30",
       focus: "termhub focus --session windows-terminal:session:<windowHandle>:1",
       close: "termhub close --session windows-terminal:session:<windowHandle>:1",
@@ -753,6 +835,12 @@ function buildExamples() {
     press: hasSupportedApp("iterm2")
       ? "termhub press --session iterm2:session:<uuid> --key enter"
       : "termhub press --session <id|handle> --key enter",
+    pressCombo: hasSupportedApp("iterm2")
+      ? "termhub press --session iterm2:session:<uuid> --combo cmd+k"
+      : "termhub press --session <id|handle> --combo ctrl+c",
+    pressSequence: hasSupportedApp("iterm2")
+      ? "termhub press --session iterm2:session:<uuid> --sequence 'esc,down*2,enter'"
+      : "termhub press --session <id|handle> --sequence 'esc,down*2,enter'",
     capture: hasSupportedApp("terminal")
       ? "termhub capture --session terminal:session:545305:1 --lines 30"
       : "termhub capture --session iterm2:session:<uuid> --lines 30",
@@ -784,7 +872,7 @@ Recommended AI workflow:
   2. termhub list
   3. termhub resolve ...
   4. termhub send ...
-  5. termhub press --key enter ... when the target expects a real key press
+  5. termhub press --key/--combo/--sequence ... when the target expects real key events
   6. termhub capture | focus | close ...
   7. termhub doctor when app state or permissions are unclear
   8. termhub spec for the machine-readable command and JSON contract
@@ -795,7 +883,7 @@ Usage:
   termhub list [--app <app>] [--compact]
   termhub resolve [selectors] [--compact]
   termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter] [--dry-run]
-  termhub press --session <id|handle> --key <key> [--app <app>] [--dry-run]
+  termhub press --session <id|handle> (--key <key> | --combo <combo> | --sequence <steps>) [--repeat <n>] [--delay <ms>] [--app <app>] [--dry-run]
   termhub capture --session <id|handle> [--app <app>] [--lines <n>]
   termhub focus --session <id|handle> [--app <app>] [--dry-run]
   termhub close --session <id|handle> [--app <app>] [--dry-run]
@@ -857,6 +945,8 @@ Examples:
   ${examples.resolve}
   ${examples.send}
   ${examples.press}
+  ${examples.pressCombo}
+  ${examples.pressSequence}
   ${examples.stdin}
   ${examples.capture}
   ${examples.focus}
@@ -992,21 +1082,27 @@ Examples:
     press: `termhub press
 
 Usage:
-  termhub press --session <id|handle> --key <key> [--app <app>] [--dry-run]
+  termhub press --session <id|handle> (--key <key> | --combo <combo> | --sequence <steps>) [--repeat <n>] [--delay <ms>] [--app <app>] [--dry-run]
 
 Description:
   Press a real key on one resolved target after focusing its owning window and tab.
   Use this for interactive TUIs that require an actual key event instead of a literal newline character.
-  Check supportedApps[].capabilities.pressKeys in termhub spec before calling across platforms.
+  --key sends one key name.
+  --combo sends one key chord such as ctrl+c or cmd+k.
+  --sequence sends comma-separated steps such as esc,esc or down*5,enter.
+  --repeat applies to --key or --combo.
+  Check supportedApps[].capabilities.pressKeys, pressCombos, and pressSequence in termhub spec before calling across platforms.
   --dry-run resolves the target and prints the planned key press without changing the UI.
 ${buildPressNotes().length > 0 ? `\nNotes:\n${formatBulletLines(buildPressNotes())}` : ""}
 
 Output:
   JSON object with:
-    ok, action, dryRun, plan, key, target, result
+    ok, action, dryRun, plan, mode, key, combo, sequence, repeat, delayMs, target, result
 
 Examples:
   ${examples.press}
+  ${examples.pressCombo}
+  ${examples.pressSequence}
   termhub press --session <id|handle> --key enter --dry-run
 `,
     capture: `termhub capture
@@ -1120,7 +1216,7 @@ const COMMAND_OPTIONS = {
     "currentSession",
   ]),
   send: new Set(["app", "session", "text", "stdin", "enter", "dryRun"]),
-  press: new Set(["app", "session", "key", "dryRun"]),
+  press: new Set(["app", "session", "key", "combo", "sequence", "repeat", "delay", "dryRun"]),
   focus: new Set(["app", "session", "dryRun"]),
   close: new Set(["app", "session", "dryRun"]),
   capture: new Set(["app", "session", "lines"]),
@@ -1333,6 +1429,202 @@ function requireKeyOption(options) {
   return options.key.trim().toLowerCase();
 }
 
+function normalizePressModifier(value) {
+  const raw = String(value).trim().toLowerCase();
+  return PRESS_KEY_ALIASES[raw] ?? raw;
+}
+
+function normalizePressKey(value, options = {}) {
+  const allowLiteral = options.allowLiteral === true;
+  const raw = String(value).trim().toLowerCase();
+  const normalized = PRESS_KEY_ALIASES[raw] ?? raw;
+  if (allowLiteral && /^[a-z0-9]$/.test(normalized)) {
+    return normalized;
+  }
+  if (!SUPPORTED_PRESS_KEYS.has(normalized)) {
+    throw new CLIError(`Unsupported press key: ${value}`, {
+      code: "USAGE_ERROR",
+      exitCode: 2,
+      details: {
+        supportedKeys: [...SUPPORTED_PRESS_KEYS],
+        allowLiteral: allowLiteral ? "single letters or digits are also allowed" : null,
+      },
+    });
+  }
+
+  return normalized;
+}
+
+function parsePressComboValue(value) {
+  const raw = String(value).trim().toLowerCase();
+  if (raw === "") {
+    throw new CLIError("press --combo value cannot be empty", {
+      code: "USAGE_ERROR",
+      exitCode: 2,
+    });
+  }
+
+  const parts = raw.split("+").map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) {
+    throw new CLIError("press --combo must include at least one modifier and one key", {
+      code: "USAGE_ERROR",
+      exitCode: 2,
+    });
+  }
+
+  const keyPart = parts[parts.length - 1];
+  const modifierParts = parts.slice(0, -1).map(normalizePressModifier);
+  const uniqueModifiers = [...new Set(modifierParts)];
+
+  for (const modifier of uniqueModifiers) {
+    if (!SUPPORTED_PRESS_MODIFIERS.has(modifier)) {
+      throw new CLIError(`Unsupported press modifier in --combo: ${modifier}`, {
+        code: "USAGE_ERROR",
+        exitCode: 2,
+      });
+    }
+  }
+
+  const key = normalizePressKey(keyPart, { allowLiteral: true });
+  return {
+    type: "combo",
+    key,
+    modifiers: uniqueModifiers,
+    expression: `${uniqueModifiers.join("+")}+${key}`,
+  };
+}
+
+function parsePressStepValue(value) {
+  const raw = String(value).trim();
+  if (raw === "") {
+    throw new CLIError("press --sequence contains an empty step", {
+      code: "USAGE_ERROR",
+      exitCode: 2,
+    });
+  }
+
+  if (raw.includes("+")) {
+    return parsePressComboValue(raw);
+  }
+
+  const key = normalizePressKey(raw);
+  return {
+    type: "key",
+    key,
+    modifiers: [],
+    expression: key,
+  };
+}
+
+function parsePressSequenceValue(value) {
+  const raw = String(value).trim();
+  if (raw === "") {
+    throw new CLIError("press requires a non-empty --sequence value", {
+      code: "USAGE_ERROR",
+      exitCode: 2,
+    });
+  }
+
+  const steps = [];
+  const tokens = raw.split(",");
+  for (const token of tokens) {
+    const trimmed = token.trim();
+    if (trimmed === "") {
+      throw new CLIError("press --sequence contains an empty step", {
+        code: "USAGE_ERROR",
+        exitCode: 2,
+      });
+    }
+
+    const match = /^(.*?)(?:\*(\d+))?$/.exec(trimmed);
+    const base = match?.[1]?.trim() ?? "";
+    const repeatValue = match?.[2] ? Number.parseInt(match[2], 10) : 1;
+
+    if (base === "" || !Number.isFinite(repeatValue) || repeatValue < 1) {
+      throw new CLIError(`Invalid --sequence step: ${trimmed}`, {
+        code: "USAGE_ERROR",
+        exitCode: 2,
+      });
+    }
+
+    const parsedStep = parsePressStepValue(base);
+    for (let index = 0; index < repeatValue; index += 1) {
+      steps.push(parsedStep);
+    }
+  }
+
+  return steps;
+}
+
+function requirePressAction(options) {
+  const hasKey = typeof options.key === "string" && options.key.trim() !== "";
+  const hasCombo = typeof options.combo === "string" && options.combo.trim() !== "";
+  const hasSequence = typeof options.sequence === "string" && options.sequence.trim() !== "";
+  const modeCount = Number(hasKey) + Number(hasCombo) + Number(hasSequence);
+
+  if (modeCount !== 1) {
+    throw new CLIError("press requires exactly one of --key, --combo, or --sequence", {
+      code: "USAGE_ERROR",
+      exitCode: 2,
+    });
+  }
+
+  const delayMs =
+    typeof options.delay === "string" ? toInt(options.delay, "delay") : 40;
+  if (delayMs < 0) {
+    throw new CLIError("press --delay must be zero or a positive integer", {
+      code: "USAGE_ERROR",
+      exitCode: 2,
+    });
+  }
+
+  if (hasSequence) {
+    if (typeof options.repeat === "string") {
+      throw new CLIError("press --repeat cannot be used with --sequence", {
+        code: "USAGE_ERROR",
+        exitCode: 2,
+      });
+    }
+
+    const sequence = parsePressSequenceValue(options.sequence);
+    return {
+      mode: "sequence",
+      sequence,
+      repeat: 1,
+      delayMs,
+      descriptor: options.sequence.trim(),
+    };
+  }
+
+  const repeat = typeof options.repeat === "string" ? toInt(options.repeat, "repeat") : 1;
+  if (repeat < 1) {
+    throw new CLIError("press --repeat must be at least 1", {
+      code: "USAGE_ERROR",
+      exitCode: 2,
+    });
+  }
+
+  if (hasCombo) {
+    const combo = parsePressComboValue(options.combo);
+    return {
+      mode: "combo",
+      combo,
+      repeat,
+      delayMs,
+      descriptor: combo.expression,
+    };
+  }
+
+  const key = normalizePressKey(requireKeyOption(options));
+  return {
+    mode: "key",
+    key,
+    repeat,
+    delayMs,
+    descriptor: key,
+  };
+}
+
 async function findSessionOrThrow(sessionSpecifier, app) {
   const snapshot = await getSnapshot({ app });
   return resolveSingleSession(snapshot, sessionSpecifier);
@@ -1370,8 +1662,20 @@ function buildDryRunPlan(action, target, extra = {}) {
       automation: appInfo?.automation ?? null,
       capability: "press",
       pressKeys: capabilities?.pressKeys ?? [],
+      pressCombos: capabilities?.pressCombos ?? [],
+      pressSequence: capabilities?.pressSequence ?? false,
+      mode: extra.mode ?? "key",
       key: extra.key ?? null,
-      description: `Would focus the target and press the ${extra.key ?? "requested"} key.`,
+      combo: extra.combo ?? null,
+      sequence: extra.sequence ?? null,
+      repeat: extra.repeat ?? 1,
+      delayMs: extra.delayMs ?? null,
+      description:
+        extra.mode === "combo"
+          ? `Would focus the target and press combo ${extra.combo ?? "requested"}.`
+          : extra.mode === "sequence"
+            ? "Would focus the target and press the requested key sequence."
+            : `Would focus the target and press the ${extra.key ?? "requested"} key.`,
     };
   }
 
@@ -1667,17 +1971,33 @@ async function handleSend(options) {
 async function handlePress(options) {
   const app = normalizeAppOption(options.app);
   const sessionId = requireSessionOption(options, "press");
-  const key = requireKeyOption(options);
+  const press = requirePressAction(options);
   const target = await findSessionOrThrow(sessionId, app);
 
   if (options.dryRun === true) {
+    const key = press.mode === "key" ? press.key : null;
+    const combo = press.mode === "combo" ? press.combo.expression : null;
+    const sequence =
+      press.mode === "sequence" ? press.sequence.map((step) => step.expression) : null;
     writeJson(
       {
         ok: true,
         action: "press",
         dryRun: true,
-        plan: buildDryRunPlan("press", target, { key }),
+        plan: buildDryRunPlan("press", target, {
+          mode: press.mode,
+          key,
+          combo,
+          sequence,
+          repeat: press.repeat,
+          delayMs: press.delayMs,
+        }),
+        mode: press.mode,
         key,
+        combo,
+        sequence,
+        repeat: press.repeat,
+        delayMs: press.delayMs,
         target,
       },
       options,
@@ -1685,14 +2005,19 @@ async function handlePress(options) {
     return;
   }
 
-  const result = await pressKeyOnTarget(target, key);
+  const result = await pressKeyOnTarget(target, press);
 
   writeJson(
     {
       ok: true,
       action: "press",
       dryRun: false,
-      key,
+      mode: press.mode,
+      key: press.mode === "key" ? press.key : null,
+      combo: press.mode === "combo" ? press.combo.expression : null,
+      sequence: press.mode === "sequence" ? press.sequence.map((step) => step.expression) : null,
+      repeat: press.repeat,
+      delayMs: press.delayMs,
       target,
       result,
     },

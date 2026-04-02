@@ -19,7 +19,10 @@ test("root help advertises AI workflow, open, close, and spec", () => {
   assert.match(help, /termhub --version \| -v \| -V/);
   assert.match(help, /termhub open \[--app <app>\] \[--window \| --tab\] \[--dry-run\] \[--compact\]/);
   assert.match(help, /open\s+Open a new terminal window or tab in one backend\./);
-  assert.match(help, /termhub press --session <id\|handle> --key <key> \[--app <app>\] \[--dry-run\]/);
+  assert.match(
+    help,
+    /termhub press --session <id\|handle> \(\--key <key> \| --combo <combo> \| --sequence <steps>\) \[--repeat <n>\] \[--delay <ms>\] \[--app <app>\] \[--dry-run\]/,
+  );
   assert.match(help, /press\s+Press a real key on one resolved target after focusing it\./);
   assert.match(help, /--title-contains <txt>/);
   assert.match(help, /--dry-run/);
@@ -39,6 +42,8 @@ test("spec command returns machine-readable command contract", () => {
   assert.equal(payload.supportedApps[0].capabilities.send, true);
   assert.equal(payload.supportedApps[0].capabilities.press, true);
   assert.equal(payload.supportedApps[0].capabilities.pressKeys.includes("enter"), true);
+  assert.equal(Array.isArray(payload.supportedApps[0].capabilities.pressCombos), true);
+  assert.equal(payload.supportedApps[0].capabilities.pressSequence, true);
   assert.equal(payload.supportedApps[0].capabilities.dryRun.includes("press"), true);
   assert.equal(typeof payload.supportedApps[0].capabilities.openWindow, "boolean");
   assert.equal(typeof payload.supportedApps[0].capabilities.openTab, "boolean");
@@ -74,8 +79,26 @@ test("spec command returns machine-readable command contract", () => {
     ),
     true,
   );
-  assert.equal(payload.commands.press.usage, "termhub press --session <id|handle> --key <key> [--app <app>] [--dry-run]");
-  assert.equal(payload.commands.press.rules.includes("--key is required."), true);
+  assert.equal(
+    payload.commands.press.usage,
+    "termhub press --session <id|handle> (--key <key> | --combo <combo> | --sequence <steps>) [--repeat <n>] [--delay <ms>] [--app <app>] [--dry-run]",
+  );
+  assert.equal(
+    payload.commands.press.rules.includes("Exactly one of --key, --combo, or --sequence is required."),
+    true,
+  );
+  assert.equal(
+    payload.commands.press.options.some((option) => option.name === "--combo"),
+    true,
+  );
+  assert.equal(
+    payload.commands.press.options.some((option) => option.name === "--sequence"),
+    true,
+  );
+  assert.equal(
+    payload.commands.press.options.some((option) => option.name === "--delay"),
+    true,
+  );
   assert.equal(
     payload.commands.close.usage,
     "termhub close --session <id|handle> [--app <app>] [--dry-run]",
@@ -109,10 +132,15 @@ test("open help explains scope selection and dry-run", () => {
 test("press help explains real keypress workflow", () => {
   const help = runCli(["press", "--help"]);
 
-  assert.match(help, /termhub press --session <id\|handle> --key <key> \[--app <app>\] \[--dry-run\]/);
+  assert.match(
+    help,
+    /termhub press --session <id\|handle> \(\--key <key> \| --combo <combo> \| --sequence <steps>\) \[--repeat <n>\] \[--delay <ms>\] \[--app <app>\] \[--dry-run\]/,
+  );
   assert.match(help, /Press a real key on one resolved target after focusing its owning window and tab\./);
+  assert.match(help, /--combo sends one key chord/);
+  assert.match(help, /--sequence sends comma-separated steps/);
   assert.match(help, /interactive TUIs/);
-  assert.match(help, /--key enter --dry-run/);
+  assert.match(help, /--combo (ctrl\+c|cmd\+k)/);
 });
 
 test("send help explains explicit enter and staged send modes", () => {
@@ -133,6 +161,26 @@ test("send rejects deprecated explicit enter flag", () => {
       /send no longer accepts --enter; send submits by default, or pass --no-enter to stage without submit/.test(
         error.stdout,
       ),
+  );
+});
+
+test("press requires exactly one key mode", () => {
+  assert.throws(
+    () => runCli(["press", "--session", "x"]),
+    (error) =>
+      error &&
+      typeof error.stdout === "string" &&
+      /press requires exactly one of --key, --combo, or --sequence/.test(error.stdout),
+  );
+});
+
+test("press rejects repeat with sequence", () => {
+  assert.throws(
+    () => runCli(["press", "--session", "x", "--sequence", "esc,enter", "--repeat", "2"]),
+    (error) =>
+      error &&
+      typeof error.stdout === "string" &&
+      /press --repeat cannot be used with --sequence/.test(error.stdout),
   );
 });
 
