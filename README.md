@@ -76,6 +76,41 @@ If you need SDK usage, recommended short-term pattern:
 2. Parse JSON from `stdout`.
 3. Treat `specVersion` and command schemas as compatibility gates.
 
+## SDK (Developer Preview)
+
+`termhub` now ships an SDK preview entry:
+
+```js
+import { createTermhubClient } from "@duo121/termhub/sdk";
+```
+
+Core SDK capabilities:
+
+- Open/close terminal targets.
+- Find/resolve terminal sessions.
+- Send keyboard text and key events (`key` / `combo` / `sequence`).
+- Mouse click simulation on terminal target (`mouseClick`) on macOS.
+
+Platform notes:
+
+- macOS (`iTerm2` / `Terminal`): keyboard + mouse click are supported.
+- Windows (`Windows Terminal` / `CMD`): keyboard control is supported; `mouseClick` currently returns unsupported.
+
+SDK quick example:
+
+```js
+import { createTermhubClient } from "@duo121/termhub/sdk";
+
+const client = createTermhubClient({ app: "iterm2" });
+
+const opened = await client.open({ scope: "tab" });
+await client.send({ session: opened.target.handle, text: "echo hello from sdk" });
+await client.press({ session: opened.target.handle, key: "enter" });
+const output = await client.capture({ session: opened.target.handle, lines: 20 });
+
+console.log(output.text);
+```
+
 ## Command Map
 
 | Top-Level Command | What It Does | Common Secondary Flags |

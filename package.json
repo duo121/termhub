@@ -3,6 +3,11 @@
   "version": "0.6.2",
   "description": "AI-native CLI for inspecting and controlling terminal tabs on macOS and Windows",
   "type": "module",
+  "exports": {
+    ".": "./src/sdk/index.js",
+    "./sdk": "./src/sdk/index.js",
+    "./package.json": "./package.json"
+  },
   "bin": {
     "termhub": "src/cli.js",
     "thub": "src/cli.js"

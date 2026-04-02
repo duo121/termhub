@@ -76,6 +76,41 @@ termhub list
 2. 解析 `stdout` 的 JSON。
 3. 以 `specVersion` 和命令 schema 做兼容性门禁。
 
+## SDK（开发者预览）
+
+`termhub` 已提供 SDK 预览入口：
+
+```js
+import { createTermhubClient } from "@duo121/termhub/sdk";
+```
+
+SDK 核心能力：
+
+- 打开/关闭终端目标。
+- 查找/定位终端会话。
+- 模拟键盘输入与按键事件（`key` / `combo` / `sequence`）。
+- 模拟鼠标点击终端目标（`mouseClick`，macOS 支持）。
+
+平台说明：
+
+- macOS（`iTerm2` / `Terminal`）：支持键盘与鼠标点击。
+- Windows（`Windows Terminal` / `CMD`）：支持键盘控制；`mouseClick` 当前返回不支持。
+
+SDK 快速示例：
+
+```js
+import { createTermhubClient } from "@duo121/termhub/sdk";
+
+const client = createTermhubClient({ app: "iterm2" });
+
+const opened = await client.open({ scope: "tab" });
+await client.send({ session: opened.target.handle, text: "echo hello from sdk" });
+await client.press({ session: opened.target.handle, key: "enter" });
+const output = await client.capture({ session: opened.target.handle, lines: 20 });
+
+console.log(output.text);
+```
+
 ## 命令地图
 
 | 一级命令 | 功能说明 | 二级参数（常用） |
