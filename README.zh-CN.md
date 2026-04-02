@@ -63,20 +63,7 @@ termhub list
 
 其中 `spec` 是机器可读事实源，`--help` 是人类可读事实源。
 
-## SDK 状态
-
-`termhub` 当前是 **CLI 优先**，还不是稳定 SDK 包。
-
-- 技术上可以从 `src/` 导入内部模块，但该接口不承诺版本稳定。
-- 当前官方支持的集成面是 CLI 的 JSON 契约（通过 `termhub spec`）。
-
-如果你要以“SDK 方式”接入，短期建议：
-
-1. 以子进程调用 `termhub`。
-2. 解析 `stdout` 的 JSON。
-3. 以 `specVersion` 和命令 schema 做兼容性门禁。
-
-## SDK（开发者预览）
+## SDK
 
 `termhub` 已提供 SDK 预览入口：
 

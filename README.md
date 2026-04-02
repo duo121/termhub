@@ -63,20 +63,7 @@ termhub list
 
 Use `spec` as machine-readable truth and `--help` as human-readable truth.
 
-## SDK Status
-
-`termhub` is currently **CLI-first**, not a stable SDK package.
-
-- You can technically import internal files from `src/`, but that API is not versioned or guaranteed.
-- The supported integration surface today is the CLI JSON contract via `termhub spec`.
-
-If you need SDK usage, recommended short-term pattern:
-
-1. Call `termhub` as a subprocess.
-2. Parse JSON from `stdout`.
-3. Treat `specVersion` and command schemas as compatibility gates.
-
-## SDK (Developer Preview)
+## SDK
 
 `termhub` now ships an SDK preview entry:
 
