@@ -64,6 +64,7 @@ termhub list
 ```
 
 其中 `spec` 是机器可读事实源，`--help` 是人类可读事实源。
+现在两者都会在开头区域包含 `currentSession` 提示，可直接复制到 `--session` 交给 AI。
 
 ## SDK
 

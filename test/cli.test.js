@@ -11,29 +11,33 @@ function runCli(args) {
   });
 }
 
-test("root help advertises AI workflow, open, close, and spec", () => {
+test("root help stays concise and AI-oriented", () => {
   const help = runCli(["--help"]);
 
-  assert.match(help, /Recommended AI workflow:/);
+  assert.match(help, /Current session for AI \(\-\-session copy\):/);
+  assert.match(help, /AI fast path:/);
   assert.match(help, /macOS and Windows/);
   assert.match(help, /termhub --version \| -v \| -V/);
   assert.match(help, /termhub open \[--app <app>\] \[--window \| --tab\] \[--dry-run\] \[--compact\]/);
+  assert.match(help, /Commands:/);
   assert.match(help, /open\s+Open a new terminal window or tab in one backend\./);
   assert.match(
     help,
     /termhub press --session <id\|handle> \(\--key <key> \| --combo <combo> \| --sequence <steps>\) \[--repeat <n>\] \[--delay <ms>\] \[--app <app>\] \[--dry-run\]/,
   );
-  assert.match(help, /press\s+Press a real key on one resolved target after focusing it\./);
-  assert.match(help, /--title-contains <txt>/);
-  assert.match(help, /--dry-run/);
+  assert.match(help, /For detailed selectors\/flags:/);
+  assert.match(help, /termhub resolve --help/);
   assert.match(help, /termhub close --session <id\|handle> \[--app <app>\]/);
   assert.match(help, /termhub spec \[--compact\]/);
+  assert.doesNotMatch(help, /Backend notes:/);
 });
 
 test("spec command returns machine-readable command contract", () => {
   const payload = JSON.parse(runCli(["spec", "--compact"]));
 
   assert.equal(payload.ok, true);
+  assert.equal(typeof payload.currentSession, "object");
+  assert.equal(typeof payload.currentSession.ok, "boolean");
   assert.equal(payload.cli.name, "termhub");
   assert.deepEqual(payload.cli.aliases, ["thub"]);
   assert.match(payload.cli.version, /^\d+\.\d+\.\d+$/);

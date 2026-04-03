@@ -23,6 +23,10 @@ import {
   sendTextToTarget,
 } from "./apps.js";
 import { filterSessions, resolveSingleSession } from "./snapshot.js";
+import {
+  formatCurrentSessionHelpBlock,
+  resolveCurrentSessionContext,
+} from "./current-session.js";
 
 const PACKAGE_VERSION = JSON.parse(
   readFileSync(new URL("../package.json", import.meta.url), "utf8"),
@@ -231,9 +235,10 @@ function buildPressNotes() {
   return notes;
 }
 
-function buildCliSpec() {
+function buildCliSpec(currentSessionContext = null) {
   return {
     ok: true,
+    currentSession: currentSessionContext,
     source: "termhub",
     specVersion: 3,
     cli: {
@@ -247,6 +252,7 @@ function buildCliSpec() {
     supportedPlatforms: SUPPORTED_PLATFORMS,
     supportedApps: buildSupportedAppsSpec(),
     recommendedWorkflow: [
+      "Read currentSession first and reuse its session value when the user asks to operate this exact terminal.",
       "Use open when the user asks the AI to create a new terminal window or tab.",
       "Use list when the user asks what is open right now.",
       "Use resolve (or find) when the user identifies a target by title, tty, current tab, window id, or handle.",
@@ -749,6 +755,7 @@ function buildCliSpec() {
         output: {
           topLevelFields: [
             "ok",
+            "currentSession",
             "source",
             "specVersion",
             "cli",
@@ -768,82 +775,6 @@ function buildCliSpec() {
 
 function formatBulletLines(items) {
   return items.map((item) => `  - ${item}`).join("\n");
-}
-
-function buildSessionIdentifierNotes() {
-  const notes = [];
-
-  if (hasSupportedApp("iterm2")) {
-    notes.push("iTerm2 sessionId is the native UUID reported by iTerm2.");
-  }
-
-  if (hasSupportedApp("terminal")) {
-    notes.push("Terminal sessionId is the tab tty, for example /dev/ttys058.");
-  }
-
-  if (hasSupportedApp("windows-terminal")) {
-    notes.push("Windows Terminal sessionId is synthetic: <windowHandle>:<tabIndex>.");
-  }
-
-  if (hasSupportedApp("cmd")) {
-    notes.push("Command Prompt sessionId is the owning cmd.exe process id.");
-  }
-
-  const handleExamples = [];
-  if (hasSupportedApp("iterm2")) {
-    handleExamples.push("iterm2:session:<uuid>");
-  }
-  if (hasSupportedApp("terminal")) {
-    handleExamples.push("terminal:session:<windowId>:<tabIndex>");
-  }
-  if (hasSupportedApp("windows-terminal")) {
-    handleExamples.push("windows-terminal:session:<windowHandle>:<tabIndex>");
-  }
-  if (hasSupportedApp("cmd")) {
-    handleExamples.push("cmd:session:<pid>");
-  }
-
-  notes.push(`Namespaced handle examples: ${handleExamples.join(", ")}.`);
-  notes.push("--session accepts either the sessionId or the namespaced handle.");
-  return notes;
-}
-
-function buildRootBackendNotes() {
-  const notes = [];
-
-  if (SUPPORTED_APP_VALUES.length > 1) {
-    notes.push("When multiple backends are running, add --app for precise current-* queries.");
-  }
-
-  notes.push("open is only available on backends whose capabilities advertise openWindow or openTab.");
-  notes.push("close targets the owning tab or window of the resolved session.");
-  notes.push("Use --dry-run with open, send, press, focus, or close when the AI should preview the exact target and action before execution.");
-
-  if (hasSupportedApp("iterm2")) {
-    notes.push("iTerm2 supports send with or without enter.");
-  }
-
-  if (hasSupportedApp("terminal")) {
-    if (getAppMetadata("terminal")?.capabilities?.sendWithoutEnter === true) {
-      notes.push("Terminal supports send without enter through keyboard automation after focusing the target tab.");
-    } else {
-      notes.push("Terminal supports send with enter only; --no-enter is rejected.");
-    }
-  }
-
-  if (SUPPORTED_APPS.some((app) => app.capabilities?.press === true)) {
-    notes.push("press sends real key events. Use --key, --combo, or --sequence for interactive TUIs.");
-  }
-
-  if (hasSupportedApp("windows-terminal")) {
-    notes.push("Windows Terminal send, focus, capture, and close use PowerShell plus UI Automation.");
-  }
-
-  if (hasSupportedApp("cmd")) {
-    notes.push("Command Prompt is modeled as one tab and one session per window.");
-  }
-
-  return [...notes, ...buildCaptureNotes(), ...buildCloseNotes()];
 }
 
 function buildExamples() {
@@ -913,26 +844,18 @@ function buildExamples() {
   };
 }
 
-function buildRootHelp() {
+function buildRootHelp(currentSessionContext = null) {
   const examples = buildExamples();
 
   return `termhub (alias: thub)
 
 AI-native terminal control CLI for macOS and Windows.
-Use it when an AI needs to inspect, resolve/find, open, focus, press keys in, capture, send to, or close terminal tabs.
+Designed for AI callers to inspect, target, send, capture, and control terminal sessions.
 
 Current platform:
   ${CURRENT_PLATFORM}
 
-Recommended AI workflow:
-  1. termhub open ... when the user asks for a new terminal window or tab
-  2. termhub list
-  3. termhub resolve ... (or termhub find ...)
-  4. termhub send ...
-  5. termhub press --key/--combo/--sequence ... when the target expects real key events
-  6. termhub capture | focus | close ...
-  7. termhub doctor when app state or permissions are unclear
-  8. termhub spec for the machine-readable command and JSON contract
+${formatCurrentSessionHelpBlock(currentSessionContext)}
 
 Usage:
   termhub --version | -v | -V
@@ -949,72 +872,28 @@ Usage:
   termhub spec [--compact]
   termhub <command> --help
 
-Command roles:
+Commands:
   open     Open a new terminal window or tab in one backend.
-  list     Discover open apps, windows, tabs, sessions, titles, TTYs, and handles.
+  list     Discover open apps, windows, tabs, sessions, and handles.
   resolve  Narrow a user-described target to exact session matches.
   find     Alias of resolve.
   send     Send text or stdin into one resolved target.
-  press    Press a real key on one resolved target after focusing it.
-  capture  Read current visible contents, or the delta since the latest send checkpoint.
+  press    Press real keys/combos/sequences on one resolved target.
+  capture  Read visible output, or delta since the latest send checkpoint.
   focus    Bring the owning window and tab to the front.
   close    Close the owning tab or window for one resolved target.
-  doctor   Diagnose platform, running apps, and automation readiness.
-  spec     Print machine-readable command, option, and output schema data.
+  doctor   Diagnose platform, backend status, and automation readiness.
+  spec     Print machine-readable command and JSON contract.
 
-Selectors for resolve/find:
-  --app <app>             Restrict search to one backend.
-  --session <id|handle>   Match a session id or namespaced handle.
-  --tty <tty>             Match a tty, for example /dev/ttys055.
-  --title <tab-title>     Match tab title.
-  --title-contains <txt>  Case-insensitive substring match for tab title.
-  --name <session-name>   Match session name.
-  --name-contains <txt>   Case-insensitive substring match for session name.
-  --window-id <id>        Match native window id.
-  --window-index <n>      Match the app-local window index.
-  --tab-index <n>         Match the app-local tab index.
-  --current-window        Match the current window inside each app.
-  --current-tab           Match the selected tab inside each app.
-  --current-session       Match the selected session inside each app.
-
-Session ids and handles:
-${formatBulletLines(buildSessionIdentifierNotes())}
-
-Output model:
-  - list returns:
-      frontmostApp
-      apps[]
-      windows[].tabs[].sessions[]
-  - resolve returns:
-      count
-      matches[]
-  - matches include:
-      ${MATCH_FIELDS.join(", ")}
-
-Backend notes:
-${formatBulletLines(buildRootBackendNotes())}
-
-Examples:
-  termhub --version
-  termhub -V
-  termhub spec
-  ${examples.open}
-  termhub list
-  termhub list --app ${examples.listApp}
+AI fast path:
   ${examples.resolve}
-  ${examples.send}
   ${examples.sendAwait}
-  ${examples.press}
-  ${examples.pressCombo}
-  ${examples.pressSequence}
-  ${examples.stdin}
-  ${examples.capture}
   ${examples.captureDelta}
-  ${examples.focus}
-  ${examples.close}
 
-Supported app values on this machine:
-  ${SUPPORTED_APP_VALUES.join(", ") || "(none)"}
+For detailed selectors/flags:
+  termhub resolve --help
+  termhub send --help
+  termhub spec
 `;
 }
 
@@ -1250,6 +1129,7 @@ Usage:
 Description:
   Print the machine-readable termhub command contract for AI callers.
   Includes:
+    current session hint
     platform
     supported apps
     recommended workflow
@@ -1378,16 +1258,16 @@ function parseArgv(argv) {
   };
 }
 
-function getHelpText(command) {
+async function getHelpText(command) {
   const normalizedCommand = normalizeCommand(command);
-  const rootHelp = buildRootHelp();
   const commandHelp = buildCommandHelp();
 
   if (!normalizedCommand || normalizedCommand === "help") {
-    return rootHelp;
+    const currentSessionContext = await resolveCurrentSessionContext();
+    return buildRootHelp(currentSessionContext);
   }
 
-  return commandHelp[normalizedCommand] ?? rootHelp;
+  return commandHelp[normalizedCommand] ?? buildRootHelp();
 }
 
 function assertKnownCommand(command) {
@@ -2458,14 +2338,15 @@ async function handleDoctor(options) {
 }
 
 async function handleSpec(options) {
-  writeJson(buildCliSpec(), options);
+  const currentSessionContext = await resolveCurrentSessionContext();
+  writeJson(buildCliSpec(currentSessionContext), options);
 }
 
 async function main() {
   const parsed = parseArgv(process.argv.slice(2));
 
   if (parsed.command === "help") {
-    process.stdout.write(getHelpText("help"));
+    process.stdout.write(await getHelpText("help"));
     return;
   }
 
@@ -2477,7 +2358,7 @@ async function main() {
   assertKnownCommand(parsed.command);
 
   if (parsed.options.help) {
-    process.stdout.write(getHelpText(parsed.command));
+    process.stdout.write(await getHelpText(parsed.command));
     return;
   }
 

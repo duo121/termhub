@@ -64,6 +64,7 @@ termhub list
 ```
 
 Use `spec` as machine-readable truth and `--help` as human-readable truth.
+Both now include a `currentSession` hint near the top that you can copy directly into `--session` for AI handoff.
 
 ## SDK
 
