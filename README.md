@@ -4,6 +4,8 @@
 
 ![termhub cover](./assets/readme-cover.en.png)
 
+![iterm2](./assets/iterm2.png)
+
 `termhub` is an AI-native terminal control tool.
 
 It is designed for this closed loop:

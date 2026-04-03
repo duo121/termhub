@@ -4,6 +4,8 @@
 
 ![termhub cover](./assets/readme-cover.zh-CN.png)
 
+![iterm2](./assets/iterm2.png)
+
 `termhub` 是一个 AI 原生的终端控制工具。
 
 它围绕这个闭环设计：
