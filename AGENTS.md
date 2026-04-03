@@ -40,3 +40,11 @@ This repository follows these execution rules.
 - Include stronger scale framing when relevant:
   - one AI assistant can watch 30 Codex terminals for me
 
+## README and social asset sync workflow
+
+- When command behavior or key parameters change, always update both:
+  - `README.md` and `README.zh-CN.md`
+  - `social/readme-cover.en.html` and `social/readme-cover.zh-CN.html`
+- `assets/readme-cover.en.png` and `assets/readme-cover.zh-CN.png` must be generated from the HTML sources above by screenshot export.
+- Do not directly hand-edit or paint the PNG files as the source of truth.
+- If README and social copy drift, fix both in the same change before finishing.
