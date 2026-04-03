@@ -1,6 +1,6 @@
 {
   "name": "@duo121/termhub",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "AI-native CLI for inspecting and controlling terminal tabs on macOS and Windows",
   "type": "module",
   "exports": {
