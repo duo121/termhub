@@ -106,7 +106,7 @@ console.log(output.text);
 | --- | --- | --- |
 | `open` | 新开终端窗口或标签页 | `--app` `--window` `--tab` `--dry-run` |
 | `list` | 列出当前窗口/标签页/session | `--app` `--compact` |
-| `resolve` | 模糊目标收敛为唯一会话 | `--title` `--title-contains` `--session` `--current-tab` |
+| `resolve` / `find` | 模糊目标收敛为唯一会话 | `--title` `--title-contains` `--session` `--current-tab` |
 | `send` | 向目标会话发送文本，并可一步等待/抓增量输出 | `--text` `--stdin` `--no-enter` `--await-output` `--dry-run` |
 | `press` | 发送真实按键/组合键/序列 | `--key` `--combo` `--sequence` `--repeat` `--delay` |
 | `capture` | 读取可见输出或上次 send checkpoint 之后的增量 | `--session` `--lines` `--since-last-send` `--app` |
@@ -117,7 +117,7 @@ console.log(output.text);
 
 ## AI 使用规则
 
-1. 任何修改类动作前，先 `resolve` 到唯一目标。
+1. 任何修改类动作前，先用 `resolve`（或 `find`）收敛到唯一目标。
 2. 多后端并存时，显式加 `--app`。
 3. 风险动作先用 `--dry-run`。
 4. 只有打算后续单独提交时，才用 `send --no-enter`。
@@ -162,6 +162,7 @@ termhub list --app iterm2
 
 ```bash
 termhub resolve --title Task1
+termhub find --title Task1
 termhub close --session <resolved-handle-or-session-id>
 ```
 

@@ -106,7 +106,7 @@ console.log(output.text);
 | --- | --- | --- |
 | `open` | Open terminal window or tab | `--app` `--window` `--tab` `--dry-run` |
 | `list` | List running windows/tabs/sessions | `--app` `--compact` |
-| `resolve` | Narrow fuzzy target to one exact session | `--title` `--title-contains` `--session` `--current-tab` |
+| `resolve` / `find` | Narrow fuzzy target to one exact session | `--title` `--title-contains` `--session` `--current-tab` |
 | `send` | Send text and optionally await/capture output delta in one step | `--text` `--stdin` `--no-enter` `--await-output` `--dry-run` |
 | `press` | Send real key/combo/sequence events | `--key` `--combo` `--sequence` `--repeat` `--delay` |
 | `capture` | Read visible output or delta since latest send checkpoint | `--session` `--lines` `--since-last-send` `--app` |
@@ -117,7 +117,7 @@ console.log(output.text);
 
 ## AI Usage Rules
 
-1. Always `resolve` to one exact target before mutating commands.
+1. Always `resolve` (or `find`) to one exact target before mutating commands.
 2. Use `--app` when multiple backends are active.
 3. Use `--dry-run` before risky operations.
 4. Use `send --no-enter` only when you plan a separate real key submit.
@@ -162,6 +162,7 @@ Close a specific tab by title:
 
 ```bash
 termhub resolve --title Task1
+termhub find --title Task1
 termhub close --session <resolved-handle-or-session-id>
 ```
 

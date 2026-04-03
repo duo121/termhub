@@ -249,7 +249,7 @@ function buildCliSpec() {
     recommendedWorkflow: [
       "Use open when the user asks the AI to create a new terminal window or tab.",
       "Use list when the user asks what is open right now.",
-      "Use resolve when the user identifies a target by title, tty, current tab, window id, or handle.",
+      "Use resolve (or find) when the user identifies a target by title, tty, current tab, window id, or handle.",
       "Only call send, capture, focus, or close after you have exactly one target.",
       "send submits by default; only use --no-enter when the text must remain staged.",
       "For interactive TUIs, send text with --no-enter when supported, then call press --key enter.",
@@ -259,7 +259,7 @@ function buildCliSpec() {
     ],
     conventions: {
       transport: "stdout JSON",
-      selectors: "All resolve selectors are ANDed together.",
+      selectors: "All resolve/find selectors are ANDed together.",
       capabilities:
         "Each supported app advertises a capabilities object so the AI can determine whether send, sendWithoutEnter, press, pressKeys, pressCombos, pressSequence, capture, focus, close, tty selectors, contains matching, and dry-run planning are supported before calling a mutating command.",
       sessionSpecifier:
@@ -353,6 +353,7 @@ function buildCliSpec() {
       resolve: {
         usage: "termhub resolve [selectors] [--compact]",
         purpose: "Narrow a user-described target to exact session matches.",
+        aliases: ["find"],
         options: [
           {
             name: "--app",
@@ -918,7 +919,7 @@ function buildRootHelp() {
   return `termhub (alias: thub)
 
 AI-native terminal control CLI for macOS and Windows.
-Use it when an AI needs to inspect, resolve, open, focus, press keys in, capture, send to, or close terminal tabs.
+Use it when an AI needs to inspect, resolve/find, open, focus, press keys in, capture, send to, or close terminal tabs.
 
 Current platform:
   ${CURRENT_PLATFORM}
@@ -926,7 +927,7 @@ Current platform:
 Recommended AI workflow:
   1. termhub open ... when the user asks for a new terminal window or tab
   2. termhub list
-  3. termhub resolve ...
+  3. termhub resolve ... (or termhub find ...)
   4. termhub send ...
   5. termhub press --key/--combo/--sequence ... when the target expects real key events
   6. termhub capture | focus | close ...
@@ -938,6 +939,7 @@ Usage:
   termhub open [--app <app>] [--window | --tab] [--dry-run] [--compact]
   termhub list [--app <app>] [--compact]
   termhub resolve [selectors] [--compact]
+  termhub find [selectors] [--compact]
   termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter] [--await-output <ms>] [--dry-run]
   termhub press --session <id|handle> (--key <key> | --combo <combo> | --sequence <steps>) [--repeat <n>] [--delay <ms>] [--app <app>] [--dry-run]
   termhub capture --session <id|handle> [--app <app>] [--lines <n>] [--since-last-send]
@@ -951,6 +953,7 @@ Command roles:
   open     Open a new terminal window or tab in one backend.
   list     Discover open apps, windows, tabs, sessions, titles, TTYs, and handles.
   resolve  Narrow a user-described target to exact session matches.
+  find     Alias of resolve.
   send     Send text or stdin into one resolved target.
   press    Press a real key on one resolved target after focusing it.
   capture  Read current visible contents, or the delta since the latest send checkpoint.
@@ -959,7 +962,7 @@ Command roles:
   doctor   Diagnose platform, running apps, and automation readiness.
   spec     Print machine-readable command, option, and output schema data.
 
-Selectors for resolve:
+Selectors for resolve/find:
   --app <app>             Restrict search to one backend.
   --session <id|handle>   Match a session id or namespaced handle.
   --tty <tty>             Match a tty, for example /dev/ttys055.
@@ -1073,6 +1076,7 @@ Hint:
 
 Usage:
   termhub resolve [selectors] [--compact]
+  termhub find [selectors] [--compact]
 
 Selectors:
   --app <app>
@@ -1103,6 +1107,7 @@ Output:
 
 Examples:
   termhub resolve --title Task1
+  termhub find --title Task1
   termhub resolve --title-contains task
   ${examples.resolve}
   termhub resolve --app ${examples.listApp} --current-window --current-tab --current-session
@@ -1260,6 +1265,9 @@ Examples:
 }
 
 const GLOBAL_OPTIONS = new Set(["help", "compact"]);
+const COMMAND_ALIASES = Object.freeze({
+  find: "resolve",
+});
 const COMMAND_OPTIONS = {
   open: new Set(["app", "window", "tab", "dryRun"]),
   list: new Set(["app"]),
@@ -1315,13 +1323,14 @@ function parseArgv(argv) {
 
   if (argv[0] === "help") {
     return {
-      command: argv[1] ?? "help",
+      command: normalizeCommand(argv[1] ?? "help"),
       options: { help: true },
       positionals: argv.slice(2),
     };
   }
 
-  const [command, ...tokens] = argv;
+  const [rawCommand, ...tokens] = argv;
+  const command = normalizeCommand(rawCommand);
   const options = {};
   const positionals = [];
 
@@ -1370,23 +1379,32 @@ function parseArgv(argv) {
 }
 
 function getHelpText(command) {
+  const normalizedCommand = normalizeCommand(command);
   const rootHelp = buildRootHelp();
   const commandHelp = buildCommandHelp();
 
-  if (!command || command === "help") {
+  if (!normalizedCommand || normalizedCommand === "help") {
     return rootHelp;
   }
 
-  return commandHelp[command] ?? rootHelp;
+  return commandHelp[normalizedCommand] ?? rootHelp;
 }
 
 function assertKnownCommand(command) {
-  if (!COMMAND_OPTIONS[command]) {
+  const normalizedCommand = normalizeCommand(command);
+  if (!COMMAND_OPTIONS[normalizedCommand]) {
     throw new CLIError(`Unknown command: ${command}`, {
       code: "UNKNOWN_COMMAND",
       exitCode: 2,
     });
   }
+}
+
+function normalizeCommand(command) {
+  if (typeof command !== "string") {
+    return command;
+  }
+  return COMMAND_ALIASES[command] ?? command;
 }
 
 function assertKnownOptions(command, options, positionals) {
