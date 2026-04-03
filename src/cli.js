@@ -124,6 +124,7 @@ function buildSendRules() {
   rules.push("send appends enter by default.");
   rules.push("Pass --no-enter only when the payload should remain staged without submit.");
   rules.push("send stores a per-session checkpoint before writing so capture --since-last-send can return only new output.");
+  rules.push("Use --await-output <ms> to let send wait and return captured delta in one closed loop.");
   rules.push("Do not append literal newline characters inside --text or --stdin to simulate submit.");
 
   if (getAppMetadata("terminal")?.capabilities?.sendWithoutEnter === false) {
@@ -185,7 +186,6 @@ function buildCloseNotes() {
 function buildCaptureNotes() {
   const notes = [];
   notes.push("Use --since-last-send to return only output added after the latest successful send on the same session.");
-  notes.push("Use --wait <ms> to delay capture after send when output is asynchronous.");
 
   if (hasSupportedApp("windows-terminal") || hasSupportedApp("cmd")) {
     notes.push("Windows capture is best-effort and only reads text that UI Automation can see in the currently visible window.");
@@ -432,7 +432,7 @@ function buildCliSpec() {
       },
       send: {
         usage:
-          "termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter] [--dry-run]",
+          "termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter] [--await-output <ms>] [--dry-run]",
         purpose: "Send text into one resolved target.",
         options: [
           {
@@ -474,6 +474,13 @@ function buildCliSpec() {
             description: "Resolve the target and print the planned send action without executing it.",
           },
           {
+            name: "--await-output",
+            type: "integer",
+            required: false,
+            description:
+              "After send succeeds, wait this many milliseconds and return captured delta since this send checkpoint.",
+          },
+          {
             name: "--compact",
             type: "boolean",
             required: false,
@@ -492,6 +499,8 @@ function buildCliSpec() {
             "target",
             "text",
             "checkpoint",
+            "awaitOutputMs",
+            "capturedDelta",
           ],
           targetFields: MATCH_FIELDS,
         },
@@ -582,7 +591,7 @@ function buildCliSpec() {
       },
       capture: {
         usage:
-          "termhub capture --session <id|handle> [--app <app>] [--lines <n>] [--since-last-send] [--wait <ms>]",
+          "termhub capture --session <id|handle> [--app <app>] [--lines <n>] [--since-last-send]",
         purpose:
           "Read visible terminal contents from one resolved target, or return only the delta since the latest send checkpoint.",
         options: [
@@ -613,12 +622,6 @@ function buildCliSpec() {
               "Return only text added since the latest send checkpoint for this exact session handle.",
           },
           {
-            name: "--wait",
-            type: "integer",
-            required: false,
-            description: "Wait this many milliseconds before capturing.",
-          },
-          {
             name: "--compact",
             type: "boolean",
             required: false,
@@ -632,7 +635,6 @@ function buildCliSpec() {
             "target",
             "text",
             "sinceLastSend",
-            "waitMs",
             "checkpoint",
           ],
           targetFields: MATCH_FIELDS,
@@ -853,6 +855,8 @@ function buildExamples() {
       open: `termhub open --app ${openApp} --window --dry-run`,
       resolve: "termhub resolve --app windows-terminal --title Task1",
       send: "termhub send --session windows-terminal:session:<windowHandle>:1 --text 'npm test'",
+      sendAwait:
+        "termhub send --session windows-terminal:session:<windowHandle>:1 --text 'npm test' --await-output 1500",
       press: "termhub press --session windows-terminal:session:<windowHandle>:1 --key enter",
       pressCombo:
         "termhub press --session windows-terminal:session:<windowHandle>:1 --combo ctrl+c",
@@ -860,7 +864,7 @@ function buildExamples() {
         "termhub press --session windows-terminal:session:<windowHandle>:1 --sequence 'esc,down*2,enter'",
       capture: "termhub capture --session windows-terminal:session:<windowHandle>:1 --lines 30",
       captureDelta:
-        "termhub capture --session windows-terminal:session:<windowHandle>:1 --since-last-send --wait 1500",
+        "termhub capture --session windows-terminal:session:<windowHandle>:1 --since-last-send",
       focus: "termhub focus --session windows-terminal:session:<windowHandle>:1",
       close: "termhub close --session windows-terminal:session:<windowHandle>:1",
       stdin:
@@ -878,6 +882,9 @@ function buildExamples() {
     send: hasSupportedApp("iterm2")
       ? "termhub send --session iterm2:session:<uuid> --text 'npm test'"
       : "termhub send --session <id|handle> --text 'npm test'",
+    sendAwait: hasSupportedApp("iterm2")
+      ? "termhub send --session iterm2:session:<uuid> --text 'npm test' --await-output 1200"
+      : "termhub send --session <id|handle> --text 'npm test' --await-output 1200",
     press: hasSupportedApp("iterm2")
       ? "termhub press --session iterm2:session:<uuid> --key enter"
       : "termhub press --session <id|handle> --key enter",
@@ -891,8 +898,8 @@ function buildExamples() {
       ? "termhub capture --session terminal:session:545305:1 --lines 30"
       : "termhub capture --session iterm2:session:<uuid> --lines 30",
     captureDelta: hasSupportedApp("terminal")
-      ? "termhub capture --session terminal:session:545305:1 --since-last-send --wait 1200"
-      : "termhub capture --session iterm2:session:<uuid> --since-last-send --wait 1200",
+      ? "termhub capture --session terminal:session:545305:1 --since-last-send"
+      : "termhub capture --session iterm2:session:<uuid> --since-last-send",
     focus: hasSupportedApp("iterm2")
       ? "termhub focus --session iterm2:session:<uuid>"
       : "termhub focus --session terminal:session:545305:1",
@@ -931,9 +938,9 @@ Usage:
   termhub open [--app <app>] [--window | --tab] [--dry-run] [--compact]
   termhub list [--app <app>] [--compact]
   termhub resolve [selectors] [--compact]
-  termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter] [--dry-run]
+  termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter] [--await-output <ms>] [--dry-run]
   termhub press --session <id|handle> (--key <key> | --combo <combo> | --sequence <steps>) [--repeat <n>] [--delay <ms>] [--app <app>] [--dry-run]
-  termhub capture --session <id|handle> [--app <app>] [--lines <n>] [--since-last-send] [--wait <ms>]
+  termhub capture --session <id|handle> [--app <app>] [--lines <n>] [--since-last-send]
   termhub focus --session <id|handle> [--app <app>] [--dry-run]
   termhub close --session <id|handle> [--app <app>] [--dry-run]
   termhub doctor [--app <app>] [--compact]
@@ -993,6 +1000,7 @@ Examples:
   termhub list --app ${examples.listApp}
   ${examples.resolve}
   ${examples.send}
+  ${examples.sendAwait}
   ${examples.press}
   ${examples.pressCombo}
   ${examples.pressSequence}
@@ -1105,7 +1113,7 @@ Hint:
     send: `termhub send
 
 Usage:
-  termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter] [--dry-run]
+  termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter] [--await-output <ms>] [--dry-run]
 
 Description:
   Send text to one resolved session target.
@@ -1115,16 +1123,18 @@ Description:
   send appends enter by default.
   Check supportedApps[].capabilities.sendWithoutEnter in termhub spec before using --no-enter.
   --no-enter stages the payload without submit. For interactive TUIs, pair --no-enter with a later press --key enter call.
+  --await-output waits after send, then captures and returns delta output in the same command.
   send stores a per-session checkpoint before writing so a later capture --since-last-send can return only new output.
   Do not append literal newline characters inside --text or stdin to simulate submit.
   --dry-run resolves the target and prints the planned send without writing to the terminal.
 
 Output:
   JSON object with:
-    ok, action, dryRun, plan, submit, bytes, target, text, checkpoint
+    ok, action, dryRun, plan, submit, bytes, target, text, checkpoint, awaitOutputMs, capturedDelta
 
 Examples:
   ${examples.send}
+  ${examples.sendAwait}
   termhub send --session <id|handle> --text 'analyze this error' --no-enter
   termhub send --session <id|handle> --text 'echo hello' --dry-run
   termhub send --session <id|handle> --text 'echo hello'
@@ -1159,18 +1169,17 @@ Examples:
     capture: `termhub capture
 
 Usage:
-  termhub capture --session <id|handle> [--app <app>] [--lines <n>] [--since-last-send] [--wait <ms>]
+  termhub capture --session <id|handle> [--app <app>] [--lines <n>] [--since-last-send]
 
 Description:
   Capture current visible terminal contents for one resolved target.
   --since-last-send returns only output added after the latest successful send checkpoint on this session.
-  --wait delays capture by N milliseconds.
   --lines trims the result to the last N lines after capture.
 ${captureNotes.length > 0 ? `\nNotes:\n${formatBulletLines(captureNotes)}` : ""}
 
 Output:
   JSON object with:
-    ok, action, target, text, sinceLastSend, waitMs, checkpoint
+    ok, action, target, text, sinceLastSend, checkpoint
 
 Examples:
   ${examples.capture}
@@ -1269,11 +1278,11 @@ const COMMAND_OPTIONS = {
     "currentTab",
     "currentSession",
   ]),
-  send: new Set(["app", "session", "text", "stdin", "enter", "dryRun"]),
+  send: new Set(["app", "session", "text", "stdin", "enter", "awaitOutput", "dryRun"]),
   press: new Set(["app", "session", "key", "combo", "sequence", "repeat", "delay", "dryRun"]),
   focus: new Set(["app", "session", "dryRun"]),
   close: new Set(["app", "session", "dryRun"]),
-  capture: new Set(["app", "session", "lines", "sinceLastSend", "wait"]),
+  capture: new Set(["app", "session", "lines", "sinceLastSend"]),
   doctor: new Set(["app"]),
   spec: new Set([]),
 };
@@ -2102,6 +2111,14 @@ async function handleSend(options) {
   const text = usingText ? options.text : await readStdinText();
   const target = await findSessionOrThrow(sessionId, app);
   const submit = options.enter !== false;
+  const hasAwaitOutput = options.awaitOutput != null;
+  const awaitOutputMs = hasAwaitOutput ? toInt(options.awaitOutput, "await-output") : null;
+  if (awaitOutputMs != null && awaitOutputMs < 0) {
+    throw new CLIError("send --await-output must be greater than or equal to 0", {
+      code: "USAGE_ERROR",
+      exitCode: 2,
+    });
+  }
 
   if (options.dryRun === true) {
     writeJson(
@@ -2118,12 +2135,15 @@ async function handleSend(options) {
           planned: true,
           mode: "save-before-send",
         },
+        awaitOutputMs,
+        capturedDelta: hasAwaitOutput ? "<captured after send>" : null,
       },
       options,
     );
     return;
   }
 
+  let baselineText = null;
   let checkpoint = {
     saved: false,
     sessionKey: getSessionCheckpointKey(target),
@@ -2133,7 +2153,7 @@ async function handleSend(options) {
   };
 
   try {
-    const baselineText = await captureTarget(target);
+    baselineText = await captureTarget(target);
     const savedCheckpoint = await saveSessionCheckpoint(target, baselineText);
     checkpoint = {
       saved: true,
@@ -2143,6 +2163,20 @@ async function handleSend(options) {
       error: null,
     };
   } catch (error) {
+    if (hasAwaitOutput) {
+      throw new CLIError(
+        "send --await-output requires checkpoint capture before sending",
+        {
+          code: "CHECKPOINT_CAPTURE_FAILED",
+          exitCode: 1,
+          details: {
+            session: target.handle ?? target.sessionId,
+            message: getErrorMessage(error),
+          },
+        },
+      );
+    }
+
     checkpoint = {
       ...checkpoint,
       error: getErrorMessage(error),
@@ -2150,6 +2184,15 @@ async function handleSend(options) {
   }
 
   await sendTextToTarget(target, text, { newline: submit });
+
+  let capturedDelta = null;
+  if (hasAwaitOutput) {
+    if (awaitOutputMs > 0) {
+      await delay(awaitOutputMs);
+    }
+    const currentText = await captureTarget(target);
+    capturedDelta = computeCaptureDelta(currentText, baselineText ?? "");
+  }
 
   writeJson(
     {
@@ -2161,6 +2204,8 @@ async function handleSend(options) {
       target,
       text,
       checkpoint,
+      awaitOutputMs,
+      capturedDelta,
     },
     options,
   );
@@ -2228,18 +2273,6 @@ async function handleCapture(options) {
   const sessionId = requireSessionOption(options, "capture");
   const target = await findSessionOrThrow(sessionId, app);
 
-  const waitMs = options.wait != null ? toInt(options.wait, "wait") : 0;
-  if (waitMs < 0) {
-    throw new CLIError("capture --wait must be greater than or equal to 0", {
-      code: "USAGE_ERROR",
-      exitCode: 2,
-    });
-  }
-
-  if (waitMs > 0) {
-    await delay(waitMs);
-  }
-
   const sinceLastSend = options.sinceLastSend === true;
   let checkpoint = null;
   let text = await captureTarget(target);
@@ -2279,7 +2312,6 @@ async function handleCapture(options) {
       target,
       text,
       sinceLastSend,
-      waitMs,
       checkpoint: checkpoint
         ? {
             sessionKey: checkpoint.sessionKey,

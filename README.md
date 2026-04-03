@@ -105,9 +105,9 @@ console.log(output.text);
 | `open` | Open terminal window or tab | `--app` `--window` `--tab` `--dry-run` |
 | `list` | List running windows/tabs/sessions | `--app` `--compact` |
 | `resolve` | Narrow fuzzy target to one exact session | `--title` `--title-contains` `--session` `--current-tab` |
-| `send` | Send text to resolved target session | `--text` `--stdin` `--no-enter` `--dry-run` |
+| `send` | Send text and optionally await/capture output delta in one step | `--text` `--stdin` `--no-enter` `--await-output` `--dry-run` |
 | `press` | Send real key/combo/sequence events | `--key` `--combo` `--sequence` `--repeat` `--delay` |
-| `capture` | Read visible output or delta since latest send | `--session` `--lines` `--since-last-send` `--wait` `--app` |
+| `capture` | Read visible output or delta since latest send checkpoint | `--session` `--lines` `--since-last-send` `--app` |
 | `focus` | Bring target window/session to front | `--session` `--app` `--dry-run` |
 | `close` | Close target tab or window | `--session` `--app` `--dry-run` |
 | `doctor` | Check platform/backend/automation readiness | `--app` `--compact` |
@@ -184,15 +184,14 @@ termhub send --app windows-terminal --session windows-terminal:session:<window-h
 Basic flow:
 
 ```bash
-termhub send --session <id|handle> --text "npm test"
-termhub capture --session <id|handle> --since-last-send --wait 1200
+termhub send --session <id|handle> --text "npm test" --await-output 1200
 ```
 
 How it works:
 
 - `send` stores a checkpoint for that exact session before writing input.
-- `capture --since-last-send` compares current output with that session checkpoint and returns only the delta.
-- `--wait <ms>` delays capture so async output has time to appear.
+- `send --await-output <ms>` waits and returns only delta output produced after that send.
+- `capture --since-last-send` remains available when you want a separate explicit read step.
 
 Concurrency:
 

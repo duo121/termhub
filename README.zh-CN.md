@@ -105,9 +105,9 @@ console.log(output.text);
 | `open` | 新开终端窗口或标签页 | `--app` `--window` `--tab` `--dry-run` |
 | `list` | 列出当前窗口/标签页/session | `--app` `--compact` |
 | `resolve` | 模糊目标收敛为唯一会话 | `--title` `--title-contains` `--session` `--current-tab` |
-| `send` | 向目标会话发送文本 | `--text` `--stdin` `--no-enter` `--dry-run` |
+| `send` | 向目标会话发送文本，并可一步等待/抓增量输出 | `--text` `--stdin` `--no-enter` `--await-output` `--dry-run` |
 | `press` | 发送真实按键/组合键/序列 | `--key` `--combo` `--sequence` `--repeat` `--delay` |
-| `capture` | 读取可见输出或上次 send 之后的增量 | `--session` `--lines` `--since-last-send` `--wait` `--app` |
+| `capture` | 读取可见输出或上次 send checkpoint 之后的增量 | `--session` `--lines` `--since-last-send` `--app` |
 | `focus` | 聚焦目标窗口/会话 | `--session` `--app` `--dry-run` |
 | `close` | 关闭目标标签页或窗口 | `--session` `--app` `--dry-run` |
 | `doctor` | 检查平台/后端/自动化状态 | `--app` `--compact` |
@@ -184,15 +184,14 @@ termhub send --app windows-terminal --session windows-terminal:session:<window-h
 基本流程：
 
 ```bash
-termhub send --session <id|handle> --text "npm test"
-termhub capture --session <id|handle> --since-last-send --wait 1200
+termhub send --session <id|handle> --text "npm test" --await-output 1200
 ```
 
 工作方式：
 
 - `send` 在写入前会为该 session 保存 checkpoint。
-- `capture --since-last-send` 会用当前输出和该 session 的 checkpoint 做对比，只返回增量。
-- `--wait <ms>` 用于延迟捕获，等待异步输出出现。
+- `send --await-output <ms>` 会等待并直接返回该次 send 之后产生的增量输出。
+- 如果你需要分两步读取，仍可使用 `capture --since-last-send`。
 
 并发说明：
 
