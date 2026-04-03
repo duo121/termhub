@@ -177,6 +177,53 @@ termhub resolve --app windows-terminal --title API
 termhub send --app windows-terminal --session windows-terminal:session:<window-handle>:<tab-index> --text "npm test"
 ```
 
+## Keep Only Last Output
+
+If you want one stable "last result" file (overwrite every run, no history), add a wrapper in your shell profile.
+
+zsh (`~/.zshrc`):
+
+```bash
+export TERMHUB_LAST_OUTPUT_FILE="$HOME/.termhub-last-output.log"
+
+thrun() {
+  if [ "$#" -eq 0 ]; then
+    echo "usage: thrun <command> [args...]" >&2
+    return 2
+  fi
+
+  : >| "$TERMHUB_LAST_OUTPUT_FILE"
+  "$@" > >(tee "$TERMHUB_LAST_OUTPUT_FILE") 2> >(tee -a "$TERMHUB_LAST_OUTPUT_FILE" >&2)
+}
+```
+
+PowerShell (`$PROFILE`):
+
+```powershell
+$env:TERMHUB_LAST_OUTPUT_FILE = Join-Path $HOME ".termhub-last-output.log"
+
+function thrun {
+  param(
+    [Parameter(Mandatory = $true, Position = 0)]
+    [string]$Command,
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [object[]]$Args
+  )
+
+  Set-Content -LiteralPath $env:TERMHUB_LAST_OUTPUT_FILE -Value ""
+  & $Command @Args 2>&1 | Tee-Object -FilePath $env:TERMHUB_LAST_OUTPUT_FILE
+}
+```
+
+Usage:
+
+```bash
+thrun npm test
+thrun node src/cli.js list --compact
+```
+
+This approach records only the latest `thrun ...` execution result. It does not keep multi-run history.
+
 ## Notes
 
 - `--session` accepts native session id or namespaced handle.

@@ -177,6 +177,53 @@ termhub resolve --app windows-terminal --title API
 termhub send --app windows-terminal --session windows-terminal:session:<window-handle>:<tab-index> --text "npm test"
 ```
 
+## 只保留上一次输出
+
+如果你希望只有一个稳定的“上次结果”文件（每次覆盖，不保留历史），可以在 shell 配置里加包装函数。
+
+zsh（`~/.zshrc`）：
+
+```bash
+export TERMHUB_LAST_OUTPUT_FILE="$HOME/.termhub-last-output.log"
+
+thrun() {
+  if [ "$#" -eq 0 ]; then
+    echo "usage: thrun <command> [args...]" >&2
+    return 2
+  fi
+
+  : >| "$TERMHUB_LAST_OUTPUT_FILE"
+  "$@" > >(tee "$TERMHUB_LAST_OUTPUT_FILE") 2> >(tee -a "$TERMHUB_LAST_OUTPUT_FILE" >&2)
+}
+```
+
+PowerShell（`$PROFILE`）：
+
+```powershell
+$env:TERMHUB_LAST_OUTPUT_FILE = Join-Path $HOME ".termhub-last-output.log"
+
+function thrun {
+  param(
+    [Parameter(Mandatory = $true, Position = 0)]
+    [string]$Command,
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [object[]]$Args
+  )
+
+  Set-Content -LiteralPath $env:TERMHUB_LAST_OUTPUT_FILE -Value ""
+  & $Command @Args 2>&1 | Tee-Object -FilePath $env:TERMHUB_LAST_OUTPUT_FILE
+}
+```
+
+用法：
+
+```bash
+thrun npm test
+thrun node src/cli.js list --compact
+```
+
+这种方式只会记录最近一次 `thrun ...` 的输出，不会保存多次历史。
+
 ## 说明
 
 - `--session` 同时支持原生 session id 和 namespaced handle。
