@@ -1,8 +1,8 @@
 class Termhub < Formula
   desc "AI-native terminal control CLI"
   homepage "https://github.com/duo121/termhub"
-  url "https://registry.npmjs.org/@duo121/termhub/-/termhub-0.6.3.tgz"
-  sha256 "fb2a96e65703f572f3ad3c3133ab5f0c39f4982e1298ab91eae01167ec77df53"
+  url "https://registry.npmjs.org/@duo121/termhub/-/termhub-0.6.4.tgz"
+  sha256 "82403b90586e4f7899869a8fdba754bb8782384a9d8cae11901189970e1fc132"
   license :cannot_represent
 
   depends_on "node"
