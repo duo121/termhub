@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 
 import { readFileSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { homedir } from "node:os";
+import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { CLIError, toErrorPayload } from "./errors.js";
@@ -45,6 +49,10 @@ const MATCH_FIELDS = [
 ];
 
 const SUPPORTED_APP_VALUES = SUPPORTED_APPS.map((app) => app.app);
+const TERMHUB_STATE_DIR =
+  (process.env.TERMHUB_STATE_DIR && String(process.env.TERMHUB_STATE_DIR).trim()) ||
+  path.join(homedir(), ".termhub", "state");
+const SEND_CHECKPOINT_VERSION = 1;
 const SUPPORTED_PRESS_KEYS = new Set([
   "enter",
   "return",
@@ -115,6 +123,7 @@ function buildSendRules() {
   const rules = ["Exactly one of --text or --stdin is required."];
   rules.push("send appends enter by default.");
   rules.push("Pass --no-enter only when the payload should remain staged without submit.");
+  rules.push("send stores a per-session checkpoint before writing so capture --since-last-send can return only new output.");
   rules.push("Do not append literal newline characters inside --text or --stdin to simulate submit.");
 
   if (getAppMetadata("terminal")?.capabilities?.sendWithoutEnter === false) {
@@ -175,6 +184,8 @@ function buildCloseNotes() {
 
 function buildCaptureNotes() {
   const notes = [];
+  notes.push("Use --since-last-send to return only output added after the latest successful send on the same session.");
+  notes.push("Use --wait <ms> to delay capture after send when output is asynchronous.");
 
   if (hasSupportedApp("windows-terminal") || hasSupportedApp("cmd")) {
     notes.push("Windows capture is best-effort and only reads text that UI Automation can see in the currently visible window.");
@@ -471,7 +482,17 @@ function buildCliSpec() {
         ],
         rules: buildSendRules(),
         output: {
-          topLevelFields: ["ok", "action", "dryRun", "plan", "submit", "bytes", "target", "text"],
+          topLevelFields: [
+            "ok",
+            "action",
+            "dryRun",
+            "plan",
+            "submit",
+            "bytes",
+            "target",
+            "text",
+            "checkpoint",
+          ],
           targetFields: MATCH_FIELDS,
         },
       },
@@ -560,8 +581,10 @@ function buildCliSpec() {
         },
       },
       capture: {
-        usage: "termhub capture --session <id|handle> [--app <app>] [--lines <n>]",
-        purpose: "Read the current visible terminal contents from one resolved target.",
+        usage:
+          "termhub capture --session <id|handle> [--app <app>] [--lines <n>] [--since-last-send] [--wait <ms>]",
+        purpose:
+          "Read visible terminal contents from one resolved target, or return only the delta since the latest send checkpoint.",
         options: [
           {
             name: "--session",
@@ -583,6 +606,19 @@ function buildCliSpec() {
             description: "Trim the captured text to the last N lines.",
           },
           {
+            name: "--since-last-send",
+            type: "boolean",
+            required: false,
+            description:
+              "Return only text added since the latest send checkpoint for this exact session handle.",
+          },
+          {
+            name: "--wait",
+            type: "integer",
+            required: false,
+            description: "Wait this many milliseconds before capturing.",
+          },
+          {
             name: "--compact",
             type: "boolean",
             required: false,
@@ -590,7 +626,15 @@ function buildCliSpec() {
           },
         ],
         output: {
-          topLevelFields: ["ok", "action", "target", "text"],
+          topLevelFields: [
+            "ok",
+            "action",
+            "target",
+            "text",
+            "sinceLastSend",
+            "waitMs",
+            "checkpoint",
+          ],
           targetFields: MATCH_FIELDS,
         },
         notes: buildCaptureNotes(),
@@ -815,6 +859,8 @@ function buildExamples() {
       pressSequence:
         "termhub press --session windows-terminal:session:<windowHandle>:1 --sequence 'esc,down*2,enter'",
       capture: "termhub capture --session windows-terminal:session:<windowHandle>:1 --lines 30",
+      captureDelta:
+        "termhub capture --session windows-terminal:session:<windowHandle>:1 --since-last-send --wait 1500",
       focus: "termhub focus --session windows-terminal:session:<windowHandle>:1",
       close: "termhub close --session windows-terminal:session:<windowHandle>:1",
       stdin:
@@ -844,6 +890,9 @@ function buildExamples() {
     capture: hasSupportedApp("terminal")
       ? "termhub capture --session terminal:session:545305:1 --lines 30"
       : "termhub capture --session iterm2:session:<uuid> --lines 30",
+    captureDelta: hasSupportedApp("terminal")
+      ? "termhub capture --session terminal:session:545305:1 --since-last-send --wait 1200"
+      : "termhub capture --session iterm2:session:<uuid> --since-last-send --wait 1200",
     focus: hasSupportedApp("iterm2")
       ? "termhub focus --session iterm2:session:<uuid>"
       : "termhub focus --session terminal:session:545305:1",
@@ -884,7 +933,7 @@ Usage:
   termhub resolve [selectors] [--compact]
   termhub send --session <id|handle> (--text <text> | --stdin) [--app <app>] [--no-enter] [--dry-run]
   termhub press --session <id|handle> (--key <key> | --combo <combo> | --sequence <steps>) [--repeat <n>] [--delay <ms>] [--app <app>] [--dry-run]
-  termhub capture --session <id|handle> [--app <app>] [--lines <n>]
+  termhub capture --session <id|handle> [--app <app>] [--lines <n>] [--since-last-send] [--wait <ms>]
   termhub focus --session <id|handle> [--app <app>] [--dry-run]
   termhub close --session <id|handle> [--app <app>] [--dry-run]
   termhub doctor [--app <app>] [--compact]
@@ -897,7 +946,7 @@ Command roles:
   resolve  Narrow a user-described target to exact session matches.
   send     Send text or stdin into one resolved target.
   press    Press a real key on one resolved target after focusing it.
-  capture  Read the current visible contents from one resolved target.
+  capture  Read current visible contents, or the delta since the latest send checkpoint.
   focus    Bring the owning window and tab to the front.
   close    Close the owning tab or window for one resolved target.
   doctor   Diagnose platform, running apps, and automation readiness.
@@ -949,6 +998,7 @@ Examples:
   ${examples.pressSequence}
   ${examples.stdin}
   ${examples.capture}
+  ${examples.captureDelta}
   ${examples.focus}
   ${examples.close}
 
@@ -1065,12 +1115,13 @@ Description:
   send appends enter by default.
   Check supportedApps[].capabilities.sendWithoutEnter in termhub spec before using --no-enter.
   --no-enter stages the payload without submit. For interactive TUIs, pair --no-enter with a later press --key enter call.
+  send stores a per-session checkpoint before writing so a later capture --since-last-send can return only new output.
   Do not append literal newline characters inside --text or stdin to simulate submit.
   --dry-run resolves the target and prints the planned send without writing to the terminal.
 
 Output:
   JSON object with:
-    ok, action, dryRun, plan, submit, bytes, target, text
+    ok, action, dryRun, plan, submit, bytes, target, text, checkpoint
 
 Examples:
   ${examples.send}
@@ -1108,19 +1159,22 @@ Examples:
     capture: `termhub capture
 
 Usage:
-  termhub capture --session <id|handle> [--app <app>] [--lines <n>]
+  termhub capture --session <id|handle> [--app <app>] [--lines <n>] [--since-last-send] [--wait <ms>]
 
 Description:
-  Capture the current visible terminal contents for one resolved target.
+  Capture current visible terminal contents for one resolved target.
+  --since-last-send returns only output added after the latest successful send checkpoint on this session.
+  --wait delays capture by N milliseconds.
   --lines trims the result to the last N lines after capture.
 ${captureNotes.length > 0 ? `\nNotes:\n${formatBulletLines(captureNotes)}` : ""}
 
 Output:
   JSON object with:
-    ok, action, target, text
+    ok, action, target, text, sinceLastSend, waitMs, checkpoint
 
 Examples:
   ${examples.capture}
+  ${examples.captureDelta}
   termhub capture --session <id|handle> --lines 40
 `,
     focus: `termhub focus
@@ -1219,7 +1273,7 @@ const COMMAND_OPTIONS = {
   press: new Set(["app", "session", "key", "combo", "sequence", "repeat", "delay", "dryRun"]),
   focus: new Set(["app", "session", "dryRun"]),
   close: new Set(["app", "session", "dryRun"]),
-  capture: new Set(["app", "session", "lines"]),
+  capture: new Set(["app", "session", "lines", "sinceLastSend", "wait"]),
   doctor: new Set(["app"]),
   spec: new Set([]),
 };
@@ -1355,6 +1409,120 @@ function toInt(value, optionName) {
     });
   }
   return parsed;
+}
+
+function getErrorMessage(error) {
+  if (error instanceof Error && typeof error.message === "string") {
+    return error.message;
+  }
+
+  return String(error);
+}
+
+function getSessionCheckpointKey(target) {
+  return String(target.handle ?? `${target.app}:session:${target.sessionId}`);
+}
+
+function getSessionCheckpointPath(target) {
+  const key = getSessionCheckpointKey(target);
+  const hash = createHash("sha256").update(key).digest("hex");
+  return path.join(TERMHUB_STATE_DIR, `send-checkpoint-${hash}.json`);
+}
+
+async function saveSessionCheckpoint(target, baselineText) {
+  const sessionKey = getSessionCheckpointKey(target);
+  const checkpointPath = getSessionCheckpointPath(target);
+  const savedAt = new Date().toISOString();
+  const payload = {
+    version: SEND_CHECKPOINT_VERSION,
+    sessionKey,
+    app: target.app,
+    sessionId: target.sessionId,
+    handle: target.handle ?? null,
+    savedAt,
+    baselineText,
+  };
+
+  await mkdir(TERMHUB_STATE_DIR, { recursive: true });
+  await writeFile(checkpointPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+
+  return {
+    sessionKey,
+    checkpointPath,
+    savedAt,
+  };
+}
+
+async function readSessionCheckpoint(target) {
+  const sessionKey = getSessionCheckpointKey(target);
+  const checkpointPath = getSessionCheckpointPath(target);
+
+  let raw;
+  try {
+    raw = await readFile(checkpointPath, "utf8");
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return null;
+    }
+    throw new CLIError("Failed to read send checkpoint state", {
+      code: "STATE_ERROR",
+      exitCode: 1,
+      details: {
+        sessionKey,
+        checkpointPath,
+        message: getErrorMessage(error),
+      },
+    });
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch (error) {
+    throw new CLIError("Send checkpoint state file is invalid JSON", {
+      code: "STATE_ERROR",
+      exitCode: 1,
+      details: {
+        sessionKey,
+        checkpointPath,
+        message: getErrorMessage(error),
+      },
+    });
+  }
+
+  if (payload?.sessionKey !== sessionKey) {
+    return null;
+  }
+
+  return {
+    sessionKey,
+    checkpointPath,
+    savedAt: typeof payload.savedAt === "string" ? payload.savedAt : null,
+    baselineText: typeof payload.baselineText === "string" ? payload.baselineText : "",
+  };
+}
+
+function computeCaptureDelta(currentText, baselineText) {
+  if (currentText === baselineText) {
+    return "";
+  }
+
+  if (!baselineText) {
+    return currentText;
+  }
+
+  if (currentText.startsWith(baselineText)) {
+    return currentText.slice(baselineText.length);
+  }
+
+  const maxOverlap = Math.min(currentText.length, baselineText.length);
+  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
+    if (baselineText.slice(-overlap) === currentText.slice(0, overlap)) {
+      return currentText.slice(overlap);
+    }
+  }
+
+  return currentText;
 }
 
 function normalizeCriteria(options) {
@@ -1946,10 +2114,39 @@ async function handleSend(options) {
         bytes: Buffer.byteLength(text, "utf8"),
         target,
         text,
+        checkpoint: {
+          planned: true,
+          mode: "save-before-send",
+        },
       },
       options,
     );
     return;
+  }
+
+  let checkpoint = {
+    saved: false,
+    sessionKey: getSessionCheckpointKey(target),
+    checkpointPath: getSessionCheckpointPath(target),
+    savedAt: null,
+    error: null,
+  };
+
+  try {
+    const baselineText = await captureTarget(target);
+    const savedCheckpoint = await saveSessionCheckpoint(target, baselineText);
+    checkpoint = {
+      saved: true,
+      sessionKey: savedCheckpoint.sessionKey,
+      checkpointPath: savedCheckpoint.checkpointPath,
+      savedAt: savedCheckpoint.savedAt,
+      error: null,
+    };
+  } catch (error) {
+    checkpoint = {
+      ...checkpoint,
+      error: getErrorMessage(error),
+    };
   }
 
   await sendTextToTarget(target, text, { newline: submit });
@@ -1963,6 +2160,7 @@ async function handleSend(options) {
       bytes: Buffer.byteLength(text, "utf8"),
       target,
       text,
+      checkpoint,
     },
     options,
   );
@@ -2030,10 +2228,48 @@ async function handleCapture(options) {
   const sessionId = requireSessionOption(options, "capture");
   const target = await findSessionOrThrow(sessionId, app);
 
+  const waitMs = options.wait != null ? toInt(options.wait, "wait") : 0;
+  if (waitMs < 0) {
+    throw new CLIError("capture --wait must be greater than or equal to 0", {
+      code: "USAGE_ERROR",
+      exitCode: 2,
+    });
+  }
+
+  if (waitMs > 0) {
+    await delay(waitMs);
+  }
+
+  const sinceLastSend = options.sinceLastSend === true;
+  let checkpoint = null;
   let text = await captureTarget(target);
-  if (typeof options.lines === "string") {
+  if (sinceLastSend) {
+    checkpoint = await readSessionCheckpoint(target);
+    if (!checkpoint) {
+      throw new CLIError(
+        "capture --since-last-send requires a checkpoint from a previous successful send on this session",
+        {
+          code: "CHECKPOINT_NOT_FOUND",
+          exitCode: 3,
+          details: {
+            session: target.handle ?? target.sessionId,
+            hint: "Run termhub send on this same session first.",
+          },
+        },
+      );
+    }
+    text = computeCaptureDelta(text, checkpoint.baselineText);
+  }
+
+  if (options.lines != null) {
     const lineCount = toInt(options.lines, "lines");
-    text = text.split(/\r?\n/).slice(-lineCount).join("\n");
+    if (lineCount < 0) {
+      throw new CLIError("capture --lines must be greater than or equal to 0", {
+        code: "USAGE_ERROR",
+        exitCode: 2,
+      });
+    }
+    text = lineCount === 0 ? "" : text.split(/\r?\n/).slice(-lineCount).join("\n");
   }
 
   writeJson(
@@ -2042,6 +2278,15 @@ async function handleCapture(options) {
       action: "capture",
       target,
       text,
+      sinceLastSend,
+      waitMs,
+      checkpoint: checkpoint
+        ? {
+            sessionKey: checkpoint.sessionKey,
+            checkpointPath: checkpoint.checkpointPath,
+            savedAt: checkpoint.savedAt,
+          }
+        : null,
     },
     options,
   );

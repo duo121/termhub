@@ -74,6 +74,22 @@ test("spec command returns machine-readable command contract", () => {
     true,
   );
   assert.equal(
+    payload.commands.capture.options.some((option) => option.name === "--since-last-send"),
+    true,
+  );
+  assert.equal(
+    payload.commands.capture.options.some((option) => option.name === "--wait"),
+    true,
+  );
+  assert.equal(
+    payload.commands.send.output.topLevelFields.includes("checkpoint"),
+    true,
+  );
+  assert.equal(
+    payload.commands.capture.output.topLevelFields.includes("checkpoint"),
+    true,
+  );
+  assert.equal(
     payload.commands.send.rules.includes(
       "Do not append literal newline characters inside --text or --stdin to simulate submit.",
     ),
@@ -150,6 +166,15 @@ test("send help explains explicit enter and staged send modes", () => {
   assert.match(help, /send appends enter by default/);
   assert.match(help, /--no-enter stages the payload without submit/);
   assert.match(help, /Do not append literal newline characters inside --text or stdin to simulate submit/);
+  assert.match(help, /send stores a per-session checkpoint before writing/);
+});
+
+test("capture help explains since-last-send and wait loop", () => {
+  const help = runCli(["capture", "--help"]);
+
+  assert.match(help, /\[--since-last-send\]/);
+  assert.match(help, /\[--wait <ms>\]/);
+  assert.match(help, /returns only output added after the latest successful send checkpoint/);
 });
 
 test("send rejects deprecated explicit enter flag", () => {

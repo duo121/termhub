@@ -107,7 +107,7 @@ console.log(output.text);
 | `resolve` | Narrow fuzzy target to one exact session | `--title` `--title-contains` `--session` `--current-tab` |
 | `send` | Send text to resolved target session | `--text` `--stdin` `--no-enter` `--dry-run` |
 | `press` | Send real key/combo/sequence events | `--key` `--combo` `--sequence` `--repeat` `--delay` |
-| `capture` | Read visible terminal output | `--session` `--lines` `--app` |
+| `capture` | Read visible output or delta since latest send | `--session` `--lines` `--since-last-send` `--wait` `--app` |
 | `focus` | Bring target window/session to front | `--session` `--app` `--dry-run` |
 | `close` | Close target tab or window | `--session` `--app` `--dry-run` |
 | `doctor` | Check platform/backend/automation readiness | `--app` `--compact` |
@@ -177,52 +177,27 @@ termhub resolve --app windows-terminal --title API
 termhub send --app windows-terminal --session windows-terminal:session:<window-handle>:<tab-index> --text "npm test"
 ```
 
-## Keep Only Last Output
+## Send-To-Capture Delta Loop
 
-If you want one stable "last result" file (overwrite every run, no history), add a wrapper in your shell profile.
+`termhub` now supports a built-in session checkpoint loop so AI can capture only the new output produced after `send`.
 
-zsh (`~/.zshrc`):
-
-```bash
-export TERMHUB_LAST_OUTPUT_FILE="$HOME/.termhub-last-output.log"
-
-thrun() {
-  if [ "$#" -eq 0 ]; then
-    echo "usage: thrun <command> [args...]" >&2
-    return 2
-  fi
-
-  : >| "$TERMHUB_LAST_OUTPUT_FILE"
-  "$@" > >(tee "$TERMHUB_LAST_OUTPUT_FILE") 2> >(tee -a "$TERMHUB_LAST_OUTPUT_FILE" >&2)
-}
-```
-
-PowerShell (`$PROFILE`):
-
-```powershell
-$env:TERMHUB_LAST_OUTPUT_FILE = Join-Path $HOME ".termhub-last-output.log"
-
-function thrun {
-  param(
-    [Parameter(Mandatory = $true, Position = 0)]
-    [string]$Command,
-    [Parameter(ValueFromRemainingArguments = $true)]
-    [object[]]$Args
-  )
-
-  Set-Content -LiteralPath $env:TERMHUB_LAST_OUTPUT_FILE -Value ""
-  & $Command @Args 2>&1 | Tee-Object -FilePath $env:TERMHUB_LAST_OUTPUT_FILE
-}
-```
-
-Usage:
+Basic flow:
 
 ```bash
-thrun npm test
-thrun node src/cli.js list --compact
+termhub send --session <id|handle> --text "npm test"
+termhub capture --session <id|handle> --since-last-send --wait 1200
 ```
 
-This approach records only the latest `thrun ...` execution result. It does not keep multi-run history.
+How it works:
+
+- `send` stores a checkpoint for that exact session before writing input.
+- `capture --since-last-send` compares current output with that session checkpoint and returns only the delta.
+- `--wait <ms>` delays capture so async output has time to appear.
+
+Concurrency:
+
+- Checkpoints are session-scoped, so two AI agents can use different sessions in parallel without conflict.
+- State files are stored under `~/.termhub/state` by default.
 
 ## Notes
 

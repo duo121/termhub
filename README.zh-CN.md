@@ -107,7 +107,7 @@ console.log(output.text);
 | `resolve` | 模糊目标收敛为唯一会话 | `--title` `--title-contains` `--session` `--current-tab` |
 | `send` | 向目标会话发送文本 | `--text` `--stdin` `--no-enter` `--dry-run` |
 | `press` | 发送真实按键/组合键/序列 | `--key` `--combo` `--sequence` `--repeat` `--delay` |
-| `capture` | 读取可见终端输出 | `--session` `--lines` `--app` |
+| `capture` | 读取可见输出或上次 send 之后的增量 | `--session` `--lines` `--since-last-send` `--wait` `--app` |
 | `focus` | 聚焦目标窗口/会话 | `--session` `--app` `--dry-run` |
 | `close` | 关闭目标标签页或窗口 | `--session` `--app` `--dry-run` |
 | `doctor` | 检查平台/后端/自动化状态 | `--app` `--compact` |
@@ -177,52 +177,27 @@ termhub resolve --app windows-terminal --title API
 termhub send --app windows-terminal --session windows-terminal:session:<window-handle>:<tab-index> --text "npm test"
 ```
 
-## 只保留上一次输出
+## send 到 capture 的增量闭环
 
-如果你希望只有一个稳定的“上次结果”文件（每次覆盖，不保留历史），可以在 shell 配置里加包装函数。
+`termhub` 现在支持内置的会话 checkpoint 闭环，AI 可以只抓取 `send` 之后新增的输出。
 
-zsh（`~/.zshrc`）：
-
-```bash
-export TERMHUB_LAST_OUTPUT_FILE="$HOME/.termhub-last-output.log"
-
-thrun() {
-  if [ "$#" -eq 0 ]; then
-    echo "usage: thrun <command> [args...]" >&2
-    return 2
-  fi
-
-  : >| "$TERMHUB_LAST_OUTPUT_FILE"
-  "$@" > >(tee "$TERMHUB_LAST_OUTPUT_FILE") 2> >(tee -a "$TERMHUB_LAST_OUTPUT_FILE" >&2)
-}
-```
-
-PowerShell（`$PROFILE`）：
-
-```powershell
-$env:TERMHUB_LAST_OUTPUT_FILE = Join-Path $HOME ".termhub-last-output.log"
-
-function thrun {
-  param(
-    [Parameter(Mandatory = $true, Position = 0)]
-    [string]$Command,
-    [Parameter(ValueFromRemainingArguments = $true)]
-    [object[]]$Args
-  )
-
-  Set-Content -LiteralPath $env:TERMHUB_LAST_OUTPUT_FILE -Value ""
-  & $Command @Args 2>&1 | Tee-Object -FilePath $env:TERMHUB_LAST_OUTPUT_FILE
-}
-```
-
-用法：
+基本流程：
 
 ```bash
-thrun npm test
-thrun node src/cli.js list --compact
+termhub send --session <id|handle> --text "npm test"
+termhub capture --session <id|handle> --since-last-send --wait 1200
 ```
 
-这种方式只会记录最近一次 `thrun ...` 的输出，不会保存多次历史。
+工作方式：
+
+- `send` 在写入前会为该 session 保存 checkpoint。
+- `capture --since-last-send` 会用当前输出和该 session 的 checkpoint 做对比，只返回增量。
+- `--wait <ms>` 用于延迟捕获，等待异步输出出现。
+
+并发说明：
+
+- checkpoint 按 session 隔离，两个 AI 并行控制不同 session 不会互相冲突。
+- 默认状态文件目录是 `~/.termhub/state`。
 
 ## 说明
 
