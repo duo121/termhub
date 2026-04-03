@@ -207,3 +207,16 @@ termhub send --session <id|handle> --text "npm test" --await-output 1200
 - `--session` 同时支持原生 session id 和 namespaced handle。
 - Windows 的 `focus/send/capture/close` 依赖 PowerShell + UI Automation。
 - Windows `capture` 是 best-effort，取决于可见文本可否被 UI Automation 读取。
+
+## 发布自动化
+
+一条命令完成发布（仍包含 npm 网页确认步骤）：
+
+```bash
+npm run release:patch
+```
+
+也支持：
+
+- `npm run release:minor`
+- `npm run release:major`
