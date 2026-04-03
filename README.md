@@ -12,7 +12,7 @@ It is designed for this closed loop:
 2. AI opens a window or tab when needed.
 3. AI launches or targets a Codex session.
 4. AI sends the task into that session.
-5. AI captures the output and returns it to the user.
+5. AI captures only the new output produced after send and returns it to the user.
 
 - Command: `termhub`
 - Alias: `thub`
