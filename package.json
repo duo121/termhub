@@ -14,6 +14,7 @@
   },
   "files": [
     "src",
+    "LICENSE",
     "README.md",
     "README.zh-CN.md"
   ],
@@ -37,6 +38,7 @@
   "bugs": {
     "url": "https://github.com/duo121/termhub/issues"
   },
+  "license": "MIT",
   "scripts": {
     "test": "node --test",
     "list": "node ./src/cli.js list",
